@@ -222,7 +222,7 @@ class CompactHook:
 
         Args:
             event: Event name ("tool:post").
-            data:  Event data with tool_name, tool_input, tool_result.
+            data:  Event data with tool_name, tool_input, result.
 
         Returns:
             HookResult(action="modify") with compressed output,
@@ -245,16 +245,21 @@ class CompactHook:
             return _CONTINUE
 
         tool_input = data.get("tool_input") or {}
-        tool_result = data.get("tool_result") or {}
+        # Amplifier tool:post events carry the tool result under "result", not "tool_result".
+        # The "result.output" field is itself a dict: {"returncode": int, "stderr": str, "stdout": str}.
+        tool_result = data.get("result") or {}
 
         command: str = (
             tool_input.get("command", "") if isinstance(tool_input, dict) else ""
         )
+        output_obj = tool_result.get("output") if isinstance(tool_result, dict) else None
         output: str | None = (
-            tool_result.get("output") if isinstance(tool_result, dict) else None
+            output_obj.get("stdout") if isinstance(output_obj, dict)
+            else output_obj if isinstance(output_obj, str)
+            else None
         )
         exit_code: int | None = (
-            tool_result.get("exit_code") if isinstance(tool_result, dict) else None
+            output_obj.get("returncode") if isinstance(output_obj, dict) else None
         )
 
         if not output or not isinstance(output, str):
@@ -307,11 +312,17 @@ class CompactHook:
 
         # Build modified data — never mutate in-place
         modified_data = copy.deepcopy(data)
-        if isinstance(modified_data.get("tool_result"), dict):
-            modified_data["tool_result"]["output"] = compressed
-            # Preserve success/exit_code — never modify these
+        result_obj = modified_data.get("result")
+        output_obj_mod = result_obj.get("output") if isinstance(result_obj, dict) else None
+        if isinstance(output_obj_mod, dict):
+            # Amplifier bash tool: result.output is {"returncode": int, "stderr": str, "stdout": str}
+            modified_data["result"]["output"]["stdout"] = compressed
+            # Preserve returncode/stderr/success — never modify these
+        elif isinstance(output_obj_mod, str):
+            # Fallback: output is a plain string
+            modified_data["result"]["output"] = compressed
         else:
-            # Rare: tool_result is not a dict — can't modify safely
+            # Can't locate where to write the compressed text — passthrough
             return _CONTINUE
 
         # ── Telemetry ─────────────────────────────────────────────────────────
