@@ -8,10 +8,10 @@ hooks:
     source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main
     config:
       enabled: true
-      min_lines: 20
+      min_lines: 5
       strip_ansi: true
       show_savings: true
-      debug: false
+      debug: true
       telemetry:
         local: true
         remote: false

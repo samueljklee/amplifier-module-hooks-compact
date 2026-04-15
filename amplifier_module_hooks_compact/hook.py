@@ -57,7 +57,7 @@ class CompactHook:
         session_id: str | None = None,
     ) -> None:
         self.enabled: bool = config.get("enabled", True)
-        self.min_lines: int = int(config.get("min_lines", 20))
+        self.min_lines: int = int(config.get("min_lines", 5))
         self.strip_ansi: bool = config.get("strip_ansi", True)
         self.show_savings: bool = config.get("show_savings", True)
         self.debug: bool = config.get("debug", False)
