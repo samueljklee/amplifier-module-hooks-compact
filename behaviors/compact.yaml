@@ -1,0 +1,19 @@
+bundle:
+  name: behavior-compact
+  version: 0.1.0
+  description: Compress verbose bash output before it enters the LLM context window
+
+hooks:
+  - module: hooks-compact
+    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main
+    config:
+      enabled: true
+      min_lines: 20
+      strip_ansi: true
+      show_savings: true
+      debug: false
+      telemetry:
+        local: true
+        remote: false
+        db_path: "~/.amplifier/hooks-compact/telemetry.db"
+        retention_days: 90

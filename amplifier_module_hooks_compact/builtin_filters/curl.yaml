@@ -1,0 +1,10 @@
+match_command: "^curl\\b"
+strip_lines_matching:
+  - "^\\s*%\\s+Total"            # progress header line
+  - "^\\s*\\d+\\s+\\d+.*--:--"  # transfer progress lines
+  - "^\\*\\s+(Trying|Connected|TLS|SSL|ALPN|Server|Found|Issue|CAfile|CRLfile|Expire|subjectAltName|successfully set|Certificate|old SSL|old TLS)"
+  - "^[<>]\\s"                  # verbose request/response headers (>/<)
+  - "^\\{ \\["                  # curl verbose JSON progress
+  - "^\\s*$"                    # blank lines
+max_lines: 100
+on_empty: "curl: ok (empty response)"

@@ -1,0 +1,58 @@
+   Compiling myproject v0.1.0 (/home/user/myproject)
+    Finished test [unoptimized + debuginfo] target(s) in 8.45s
+     Running unittests src/lib.rs (target/debug/deps/myproject-a1b2c3d4)
+
+running 35 tests
+test auth::tests::test_login_valid ... ok
+test auth::tests::test_login_invalid ... FAILED
+test auth::tests::test_logout ... ok
+test auth::tests::test_session_expiry ... ok
+test auth::tests::test_token_refresh ... ok
+test cache::tests::test_insert ... ok
+test cache::tests::test_lookup_hit ... ok
+test cache::tests::test_lookup_miss ... ok
+test db::tests::test_connect ... FAILED
+test db::tests::test_query ... ok
+test db::tests::test_transaction ... ok
+test db::tests::test_rollback ... ok
+test models::tests::test_user_create ... ok
+test models::tests::test_user_validate ... ok
+test models::tests::test_user_serialize ... ok
+test utils::tests::test_parse_date ... ok
+test utils::tests::test_format_bytes ... ok
+test utils::tests::test_slugify ... ok
+test utils::tests::test_hash ... ok
+test utils::tests::test_truncate_string ... ok
+test validation::tests::test_email ... ok
+test validation::tests::test_url ... ok
+test validation::tests::test_required ... ok
+test validation::tests::test_min_length ... ok
+test validation::tests::test_max_length ... ok
+test handlers::tests::test_get ... ok
+test handlers::tests::test_post ... ok
+test handlers::tests::test_put ... ok
+test handlers::tests::test_delete ... ok
+test handlers::tests::test_auth_required ... ok
+test handlers::tests::test_cors ... ok
+test router::tests::test_route_match ... ok
+test router::tests::test_not_found ... ok
+test router::tests::test_method_not_allowed ... ok
+test integration::tests::test_full_flow ... ok
+
+failures:
+
+---- auth::tests::test_login_invalid stdout ----
+thread 'auth::tests::test_login_invalid' panicked at 'assertion `left == right` failed
+  left: Err(AuthError::InvalidCredentials)
+ right: Ok(User { id: 1, name: "test" })', src/auth.rs:45:9
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- db::tests::test_connect stdout ----
+thread 'db::tests::test_connect' panicked at 'called `Result::unwrap()` on an `Err` value: ConnectionError("ECONNREFUSED: connection refused to 127.0.0.1:5432")', src/db.rs:123:28
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+    auth::tests::test_login_invalid
+    db::tests::test_connect
+
+test result: FAILED. 33 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s

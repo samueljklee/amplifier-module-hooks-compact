@@ -1,0 +1,6 @@
+match_command: "^make\\b"
+strip_lines_matching:
+  - "^make\\[\\d+\\]:"          # entering/leaving directory noise
+  - "^\\s*$"                    # blank lines
+max_lines: 50
+on_empty: "make: ok"

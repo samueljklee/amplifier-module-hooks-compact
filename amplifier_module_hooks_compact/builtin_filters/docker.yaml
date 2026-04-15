@@ -1,0 +1,11 @@
+match_command: "^docker\\s+(build|compose\\s+build)\\b"
+strip_lines_matching:
+  - "^\\s*--->"                              # layer hash lines
+  - "^\\s*Using cache"                       # cache hit noise
+  - "^\\s*Removing intermediate container"   # cleanup noise
+  - "^\\s*#\\d+\\s+\\[.*?\\]\\s+CACHED"     # BuildKit cache
+  - "^\\s*#\\d+\\s+\\[internal\\]"          # BuildKit internal steps
+  - "^\\s*#\\d+\\s+DONE"                    # BuildKit done markers
+  - "^\\s*#\\d+\\s+CACHED"                  # BuildKit cached layers
+tail_lines: 20
+on_empty: "docker build: ok"

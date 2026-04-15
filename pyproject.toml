@@ -1,0 +1,37 @@
+[project]
+name = "amplifier-module-hooks-compact"
+version = "0.1.0"
+description = "Compress bash tool output by 60-90% before it enters the LLM context window"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["pyyaml>=6.0"]
+keywords = ["amplifier", "hook", "compression", "rtk", "token-savings"]
+
+[project.entry-points."amplifier.modules"]
+hooks-compact = "amplifier_module_hooks_compact:mount"
+
+[project.urls]
+Repository = "https://github.com/samueljklee/amplifier-module-hooks-compact"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "amplifier-core",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.0.0",
+    "ruff>=0.15.10",
+]
+
+[tool.uv.sources]
+amplifier-core = { git = "https://github.com/microsoft/amplifier-core" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["amplifier_module_hooks_compact"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+asyncio_mode = "strict"

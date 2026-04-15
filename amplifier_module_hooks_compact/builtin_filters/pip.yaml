@@ -1,0 +1,15 @@
+match_command: "^pip\\s+(install|uninstall|upgrade)\\b"
+strip_lines_matching:
+  - "^\\s*Downloading\\s"              # download progress bars
+  - "^\\s*━+\\s"                       # progress bar characters
+  - "^\\s*Using cached\\s"             # cache hit lines
+  - "^\\s*Obtaining\\s"                # metadata fetch lines
+  - "^\\s*Preparing metadata\\s"       # metadata prep lines
+  - "^\\s*Building wheels\\s"          # wheel build progress
+  - "^\\s*Building wheel\\s"
+  - "^\\s*Created wheel\\s"
+  - "^\\s*Stored in directory\\s"      # wheel cache location
+  - "^Requirement already satisfied"   # redundant already-installed
+  - "^\\s*$"                           # blank lines
+max_lines: 30
+on_empty: "pip: ok (nothing changed)"

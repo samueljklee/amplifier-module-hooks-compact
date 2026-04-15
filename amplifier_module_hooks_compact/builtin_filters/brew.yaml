@@ -1,0 +1,17 @@
+match_command: "^brew\\s+(install|upgrade|reinstall)\\b"
+strip_lines_matching:
+  - "^==>\\s+Fetching\\s"              # download progress headers
+  - "^###"                             # progress bar lines (### ###)
+  - "^\\s*$"                           # blank lines
+  - "^==>\\s+Downloading\\s"           # download lines
+  - "^Already downloaded"              # cache noise
+  - "^curl:\\s"                        # curl progress lines
+  - "^\\s+-+>\\s"                      # brew progress arrows
+  - "^==>\\s+Pouring\\s"              # installing progress
+  - "^==>\\s+Purging\\s"              # cleanup noise
+  - "^==>\\s+Checking\\s"             # check noise
+replace:
+  - pattern: "^Warning: .+ already installed"
+    replacement: "already installed (skipped)"
+max_lines: 40
+on_empty: "brew: ok"

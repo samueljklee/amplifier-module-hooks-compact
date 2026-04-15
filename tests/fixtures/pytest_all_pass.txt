@@ -1,0 +1,13 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.11.9, pytest-8.0.2, pluggy-1.5.0
+rootdir: /home/user/myproject
+configfile: pyproject.toml
+plugins: asyncio-0.23.8, anyio-4.3.0
+collected 89 items
+
+tests/test_auth.py .................                                      [ 19%]
+tests/test_models.py ............................                          [ 51%]
+tests/test_utils.py ..................................                     [ 87%]
+tests/test_api.py ............                                            [100%]
+
+============================== 89 passed in 1.23s ==============================
