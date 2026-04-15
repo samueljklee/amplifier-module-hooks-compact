@@ -8,14 +8,17 @@ An [Amplifier](https://github.com/microsoft/amplifier) hook module that compress
 
 ## Quick Start
 
-Add to your bundle:
+One command to add hooks-compact to your app:
 
-```yaml
-includes:
-  - bundle: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main
+```bash
+amplifier bundle add git+https://github.com/samueljklee/amplifier-module-hooks-compact@main#subdirectory=behaviors/compact.yaml --app
 ```
 
-Or add just the behavior to an existing bundle:
+That's it. All bash output is now compressed automatically.
+
+### Alternative: Direct hook reference
+
+If you want to customize configuration, add the hook directly in your bundle YAML:
 
 ```yaml
 hooks:
@@ -23,6 +26,8 @@ hooks:
     source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main
     config:
       enabled: true
+      min_lines: 20
+      debug: false
 ```
 
 ---
