@@ -4,7 +4,9 @@ An [Amplifier](https://github.com/microsoft/amplifier) hook module that compress
 
 **Why?** A typical AI coding session generates tens of thousands of tokens of raw bash output (`git status` boilerplate, test runner noise, compilation progress). With hooks-compact, the signal reaches the model and the noise doesn't.
 
-> **Measured in live sessions:** `git diff` 96.2% · `git status` 80.4% · `pytest` (all pass) 99.9% · `pytest` (with failures) 39.1%<sup>†</sup> · `ruff check` 83.4%<sup>‡</sup>
+> **Measured in live Amplifier A/B sessions (✓):** `git diff` 96.2% · `git status` 80.4% · `pytest` all-pass 99.9% · `pytest` failures 39.1%<sup>†</sup> · `ruff check` 83.4%<sup>‡</sup>
+>
+> **Measured in simulation against real command output (sim):** `cargo test` 96% · `cargo build` 85% clean / 42% with warnings · `cargo clippy` 57% · `npm test` 92% all-pass / 23% failures<sup>†</sup> · `docker build` 53% · `curl -v` 76%
 >
 > <sup>†</sup> Failure case: full error details preserved so the model has everything it needs to fix the issues.
 > <sup>‡</sup> All unique violation descriptions shown per rule code — model sees every unused import name, every unused variable.
@@ -75,34 +77,36 @@ hooks:
 
 ### Python Filters (complex, structured parsing)
 
-Numbers marked ✓ are measured from live Amplifier sessions (A/B tested, model performance
-verified). All-pass and failure cases are measured separately.
+Numbers marked ✓ are from live A/B sessions. Numbers marked (sim) are from simulation against real command output. All A/B tests show identical model turns with and without the hook.
 
-| Command Pattern | Strategy | All-pass | With failures |
-|----------------|----------|----------|---------------|
-| `git status` | Extract branch + file groups, strip hints, truncate large lists | **80%** ✓ | — |
-| `git diff` | Diffstat + first 8 changed lines per file (≤5 files) | **96%** ✓ | **96%** ✓ |
-| `git log` | One-line-per-commit format | 0–80%<sup>†</sup> | — |
-| `git push/pull/add/commit` | `"ok"` on success, errors on failure | ~92% | — |
-| `cargo test` | `"✓ N passed (Xs)"` on all-pass; failures only on partial | ~99% | ~60–80% |
-| `pytest` | Same asymmetric behavior as cargo test | **99.9%** ✓ | **39%** ✓<sup>‡</sup> |
-| `npm test` (jest/vitest/mocha) | Detected automatically, same pattern | ~85–99% | ~50–80% |
-| `cargo build` | `"ok"` on success; errors + warnings on failure | ~90% | — |
-| `tsc` | Error-only, strip success noise | ~85% | — |
-| `npm run build` | Success short-circuit | ~80% | — |
-| `cargo clippy` | Group-by-rule, deduplicate, count occurrences | — | ~80% |
-| `ruff check` | Group-by-rule; all unique descriptions per rule code | — | **83%** ✓<sup>§</sup> |
-| `eslint` | Same group-by-rule pattern | — | ~75% |
+| Command Pattern | Strategy | All-pass | With failures | Notes |
+|----------------|----------|----------|---------------|-------|
+| `git status` | Branch + file groups, strip hints, cap lists at 10 | **80%** ✓ | — | |
+| `git diff` | Diffstat + first 8 changed lines per file (≤5 files) | **96%** ✓ | **96%** ✓ | |
+| `git log` | One-line-per-commit format | ~0%<sup>†</sup> | — | |
+| `git push` | Compact ref on success; preserve errors on failure | **92%** (sim) | **8%** (correct) | Errors always preserved |
+| `git pull` | Branch refs + file counts; strip remote chatter | **66%** (sim) | — | |
+| `git add` | Returns `"ok"` (no output on success) | 0% (empty) | — | |
+| `git commit` | Hash+message + files changed; strip remote noise | ~3% (sim) | — | Already compact |
+| `cargo test` | `"✓ N passed (Xs)"` on all-pass; full failure blocks with panics | **96%** (sim) | **47%** (sim) | Full panics preserved |
+| `pytest` | Same asymmetric behavior | **99.9%** ✓ | **39%** ✓<sup>‡</sup> | Full tracebacks preserved |
+| `npm test` (jest/vitest/mocha) | Auto-detected; Jest failures include Expected/Received details | **92%** (sim) | **23%** (sim) | Full error blocks preserved |
+| `cargo build` | `"ok"` on success; errors + warning locations on failure | **85%** (sim) | **56%** (sim) | |
+| `tsc` | Error-only; `"ok"` on clean; count summary on failure | **0%**<sup>§</sup> (sim) | ~−6%<sup>§</sup> (sim) | Adds count summary |
+| `npm run build` | `"ok"` on success; error lines on failure | ~80% | — | |
+| `cargo clippy` | Each dead-code warning listed separately; group by lint code | **57%** (sim) | — | All function names shown |
+| `ruff check` | Group-by-rule; all unique descriptions per rule code | — | **83%** ✓<sup>¶</sup> | Every import name shown |
+| `eslint` | Group-by-rule; passthrough for already-compact clean output | **0%**<sup>**</sup> (sim) | **68%** (sim) | |
 
-<sup>†</sup> `git log --oneline` is already compact — savings are minimal by design.
+<sup>†</sup> `git log --oneline` is already compact — minimal savings by design.
 
-<sup>‡</sup> Failure case: full traceback + assertion messages preserved per failing test. Model
-has everything needed to fix the issues. Savings are lower because error details are kept.
+<sup>‡</sup> Failure case: full traceback + assertion messages preserved per failing test. Model has everything needed to fix the issues. Savings are lower by design.
 
-<sup>§</sup> Failure case: every unique violation description is shown per rule code. For example,
-`F401 (9×): \`os\` imported but unused | \`sys\` imported but unused | ...` so the model sees
-every specific import name, not just "9 F401 violations". Single-occurrence violations include
-`file:line` location.
+<sup>§</sup> `tsc` with no errors outputs nothing; output is already minimal. Adding a count summary slightly increases size, but provides a useful `✗ 4 error(s)` summary.
+
+<sup>¶</sup> All unique violation descriptions shown per rule code. E.g., `F401 (9×): \`os\` imported but unused | \`sys\` imported but unused | ...` — the model sees every specific import name.
+
+<sup>**</sup> ESLint with no issues outputs `✔ 0 problems` (already compact, not expanded further).
 
 **Tool runner prefixes** are automatically stripped before matching, so all patterns work
 whether the model uses the tool directly or via a package runner:
@@ -119,13 +123,15 @@ whether the model uses the tool directly or via a package runner:
 
 ### YAML Filters (declarative, regex pipelines)
 
-| Command Pattern | Strategy |
-|----------------|----------|
-| `make` | Strip entering/leaving directory, `"make: ok"` on empty |
-| `docker build` | Strip layer caching, keep final 20 lines |
-| `pip install` | Strip download progress, cap at 30 lines |
-| `brew install` | Strip fetch lines, short-circuit "already installed" |
-| `curl` (verbose) | Strip connection handshake, keep response |
+| Command Pattern | Strategy | Savings |
+|----------------|----------|---------|
+| `make` | Strip `make[N]:` entering/leaving directory lines; `"make: ok"` on empty | ~27–94% |
+| `docker build` | Strip BuildKit internal/cached/transfer lines; keep steps and final image | **53%** (sim) |
+| `pip install` | Strip download progress bars; `"pip: ok"` when all already satisfied | 52–95% (sim) |
+| `brew install` | Strip fetch/pour lines; short-circuit already-installed | 31–61% (sim) |
+| `curl` (verbose) | Strip connection handshake, request/response headers; keep body | **76%** (sim) |
+
+**Docker note**: Both legacy format (` ---> <hash>`, `Using cache`) and modern BuildKit format (` => [internal]`, ` => CACHED [N/M]`, ` => => transferring`) are handled.
 
 ---
 
@@ -170,7 +176,7 @@ User filters have **higher priority** than built-in filters, so you can override
 Set `debug: true` to see exactly what's happening for every compression:
 
 ```
-┌─ hooks-compact debug ──────────────────────────────────────────────────
+┌─ hooks-compact ──────────────────────────────────────────────────────
 │ Command:  cargo test
 │ Filter:   cargo-test (Python)
 │ Input:    4823 chars (262 lines)
@@ -184,7 +190,7 @@ Set `debug: true` to see exactly what's happening for every compression:
 │
 │ ── COMPRESSED ──
 │ ✓ 262 passed (0.08s)
-└────────────────────────────────────────────────────────────────────────
+└──────────────────────────────────────────────────────────────────────
 ```
 
 Debug output goes to the user message only — **not injected into LLM context**.
