@@ -182,13 +182,46 @@ def filter_npm_test(output: str, command: str, exit_code: int | None) -> str:
         passed_m = re.search(r"(\d+) passed", jest_tests_line)
 
         if failed_m and int(failed_m.group(1)) > 0:
-            # Extract FAIL sections
-            fail_lines = [
-                line for line in lines if line.startswith("  ●") or "FAIL" in line
-            ]
+            # Extract full FAIL blocks (header + error detail + at: location)
+            # A failure block starts with "  ● test name" and ends at the next
+            # "  ●" header or "Test Suites:" summary line.
+            fail_blocks: list[str] = []
+            in_block = False
+            block_lines: list[str] = []
+            block_line_count = 0
+            _MAX_BLOCK_LINES = 20  # cap per failure block
+
+            for line in lines:
+                if re.match(r"^\s+●\s+", line):
+                    # Flush previous block
+                    if block_lines:
+                        fail_blocks.append("\n".join(block_lines))
+                    block_lines = [line]
+                    block_line_count = 1
+                    in_block = True
+                elif in_block:
+                    # Stop capturing at summary lines
+                    if re.match(r"^Test Suites?:", line) or re.match(r"^Tests?:", line):
+                        if block_lines:
+                            fail_blocks.append("\n".join(block_lines))
+                        block_lines = []
+                        in_block = False
+                    elif block_line_count < _MAX_BLOCK_LINES:
+                        block_lines.append(line)
+                        block_line_count += 1
+
+            if block_lines:
+                fail_blocks.append("\n".join(block_lines))
+
             summary = jest_tests_line
             if jest_suites_line:
                 summary = jest_suites_line + "\n" + summary
+            if fail_blocks:
+                return (summary + "\n\n" + "\n\n".join(fail_blocks[:5])).strip()
+            # Fallback: just show FAIL file and test names
+            fail_lines = [
+                line for line in lines if line.startswith("FAIL ") or re.match(r"^\s+●\s+", line)
+            ]
             return (summary + "\n" + "\n".join(fail_lines[:30])).strip()
         elif passed_m:
             n = passed_m.group(1)

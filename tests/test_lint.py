@@ -75,6 +75,30 @@ class TestFilterCargoClippy:
         result = filter_cargo_clippy(output, "cargo clippy", 1)
         assert "E0308" in result or "mismatched" in result
 
+    def test_different_dead_code_warnings_shown_separately(self):
+        """Dead code warnings for different functions must NOT be merged into one.
+
+        Before the fix, all 3 warnings would appear as:
+          warning[misc]: function `add` is never used (3×)
+        After: each function is listed separately so the model can fix all of them.
+        """
+        output = (
+            "warning: function `add` is never used\n"
+            " --> src/main.rs:1:4\n"
+            "warning: function `multiply` is never used\n"
+            " --> src/main.rs:5:4\n"
+            "warning: function `helper` is never used\n"
+            " --> src/main.rs:9:4\n"
+            "warning: `myproject` (bin \"myproject\") generated 3 warnings\n"
+        )
+        result = filter_cargo_clippy(output, "cargo clippy", 0)
+        # All three function names must appear in output
+        assert "add" in result, f"function 'add' missing from:\n{result}"
+        assert "multiply" in result, f"function 'multiply' missing from:\n{result}"
+        assert "helper" in result, f"function 'helper' missing from:\n{result}"
+        # Should NOT show a misleading "(3×)" that implies 3 identical warnings
+        assert "(3×)" not in result
+
 
 # ── ruff check ────────────────────────────────────────────────────────────────
 

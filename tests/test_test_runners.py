@@ -234,6 +234,32 @@ class TestFilterNpmTest:
         result = filter_npm_test(output, "npm test", 1)
         assert "failed" in result.lower() or "✗" in result
 
+    def test_jest_failures_preserve_expected_received(self):
+        """Jest failure blocks include Expected/Received lines so model can fix errors."""
+        output = (
+            "FAIL ./test.js\n"
+            "  math\n"
+            "    ✕ adds correctly\n"
+            "\n"
+            "  ● math › adds correctly\n"
+            "\n"
+            "    expect(received).toBe(expected)\n"
+            "\n"
+            "    Expected: 5\n"
+            "    Received: 3\n"
+            "\n"
+            "      at Object.toBe (test.js:5:27)\n"
+            "\n"
+            "Test Suites: 1 failed, 1 total\n"
+            "Tests:       1 failed, 1 total\n"
+        )
+        result = filter_npm_test(output, "npm test", 1)
+        # Must preserve the Expected/Received values so the model knows what went wrong
+        assert "Expected" in result and "Received" in result, (
+            f"Expected/Received not preserved in failure output:\n{result}"
+        )
+        assert "5" in result and "3" in result
+
     def test_mocha_all_pass(self):
         output = (
             "  auth\n    ✓ should login\n    ✓ should logout\n\n  2 passing (45ms)\n"

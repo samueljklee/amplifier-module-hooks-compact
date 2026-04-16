@@ -334,6 +334,11 @@ def filter_git_simple(output: str, command: str, exit_code: int | None) -> str:
                 ]
             ):
                 useful.append(stripped)
+                continue
+            # Keep git commit result lines: "[branch hash] commit message"
+            # Format: "[main abc1234] Add new feature"
+            if re.match(r"^\[[\w/.-]+\s+[0-9a-f]{5,}\]", stripped):
+                useful.append(stripped)
         if useful:
             return "\n".join(useful)
         return "ok"

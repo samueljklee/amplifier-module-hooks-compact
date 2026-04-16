@@ -1,11 +1,20 @@
 match_command: "^docker\\s+(build|compose\\s+build)\\b"
 strip_lines_matching:
+  # Legacy (non-BuildKit) format
   - "^\\s*--->"                              # layer hash lines
   - "^\\s*Using cache"                       # cache hit noise
   - "^\\s*Removing intermediate container"   # cleanup noise
-  - "^\\s*#\\d+\\s+\\[.*?\\]\\s+CACHED"     # BuildKit cache
-  - "^\\s*#\\d+\\s+\\[internal\\]"          # BuildKit internal steps
-  - "^\\s*#\\d+\\s+DONE"                    # BuildKit done markers
-  - "^\\s*#\\d+\\s+CACHED"                  # BuildKit cached layers
+  # Legacy BuildKit format (--progress=plain): #N [internal] / #N DONE / #N CACHED
+  - "^\\s*#\\d+\\s+\\[.*?\\]\\s+CACHED"
+  - "^\\s*#\\d+\\s+\\[internal\\]"
+  - "^\\s*#\\d+\\s+DONE"
+  - "^\\s*#\\d+\\s+CACHED"
+  # Modern BuildKit format (default since Docker 20+, --progress=auto)
+  - "^\\s*=>\\s*=>\\s+transferring"         # sub-step: transferring dockerfile/context
+  - "^\\s*=>\\s*=>\\s+exporting layers"     # sub-step: layer export noise
+  - "^\\s*=>\\s*=>\\s+writing image"        # sub-step: writing image sha256
+  - "^\\s*=>\\s+\\[internal\\]"             # internal load steps
+  - "^\\s*=>\\s+CACHED\\s"                  # cached layer lines (CACHED [N/M] ...)
+  - "^\\s*=>\\s*=>\\s+resolve\\s"           # resolve image metadata
 tail_lines: 20
 on_empty: "docker build: ok"

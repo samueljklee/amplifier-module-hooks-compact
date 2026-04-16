@@ -1,9 +1,11 @@
 match_command: "^curl\\b"
 strip_lines_matching:
-  - "^\\s*%\\s+Total"            # progress header line
-  - "^\\s*\\d+\\s+\\d+.*--:--"  # transfer progress lines
+  - "^\\s*%\\s+Total"            # progress header line "% Total % Received..."
+  - "^\\s+Dload\\s+Upload"       # progress header continuation "Dload Upload Total..."
+  - "^\\s*\\d+\\s+\\d+.*--:--"  # transfer progress lines "100 1256  100..."
   - "^\\*\\s+(Trying|Connected|TLS|SSL|ALPN|Server|Found|Issue|CAfile|CRLfile|Expire|subjectAltName|successfully set|Certificate|old SSL|old TLS)"
-  - "^[<>]\\s"                  # verbose request/response headers (>/<)
+  - "^[<>]\\s"                  # verbose request/response headers ("> GET /..." or "< HTTP/...")
+  - "^>\\s*$"                   # bare ">" line (end of request headers block)
   - "^\\{ \\["                  # curl verbose JSON progress
   - "^\\s*$"                    # blank lines
 max_lines: 100

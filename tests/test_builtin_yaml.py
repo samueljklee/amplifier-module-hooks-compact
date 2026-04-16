@@ -166,6 +166,53 @@ class TestDockerFilter:
         result = apply_yaml_filter(output, config)
         assert result == "docker build: ok"
 
+    def test_buildkit_internal_steps_stripped(self) -> None:
+        """Modern BuildKit ' => [internal] ...' lines are stripped."""
+        config = _load("docker")
+        output = (
+            "[+] Building 5.3s (8/8) FINISHED\n"
+            " => [internal] load build definition from Dockerfile           0.0s\n"
+            " => => transferring dockerfile: 523B                           0.0s\n"
+            " => [internal] load metadata for docker.io/library/python:3.11 0.7s\n"
+            " => [1/4] FROM docker.io/library/python:3.11-slim              0.0s\n"
+            " => CACHED [2/4] WORKDIR /app                                  0.0s\n"
+            " => [3/4] COPY . .                                              0.3s\n"
+            " => [4/4] RUN pip install -r requirements.txt                  3.1s\n"
+            " => exporting to image                                          0.8s\n"
+            " => => exporting layers                                         0.7s\n"
+            " => => writing image sha256:deadbeef                           0.0s\n"
+            " => => naming to docker.io/library/myapp:latest                0.0s\n"
+        )
+        result = apply_yaml_filter(output, config)
+        # Internal steps stripped
+        assert "[internal]" not in result
+        assert "transferring dockerfile" not in result
+        assert "exporting layers" not in result
+        assert "writing image sha256" not in result
+        # Key information preserved
+        assert "FINISHED" in result
+        assert "[3/4] COPY" in result or "[4/4] RUN" in result
+        assert "naming to" in result
+
+    def test_buildkit_cached_layers_stripped(self) -> None:
+        """Modern BuildKit 'CACHED [N/M] ...' layer lines are stripped."""
+        config = _load("docker")
+        output = (
+            "[+] Building 2.1s (6/6) FINISHED\n"
+            " => CACHED [1/4] FROM python:3.11\n"
+            " => CACHED [2/4] WORKDIR /app\n"
+            " => CACHED [3/4] COPY requirements.txt .\n"
+            " => [4/4] COPY . .\n"
+            " => exporting to image\n"
+            " => => naming to docker.io/library/myapp:latest\n"
+        )
+        result = apply_yaml_filter(output, config)
+        # Cached layers are noise: stripped
+        assert "CACHED [1/4]" not in result
+        assert "CACHED [2/4]" not in result
+        # Non-cached step preserved
+        assert "[4/4] COPY" in result
+
 
 # ── pip ──────────────────────────────────────────────────────────────────────
 

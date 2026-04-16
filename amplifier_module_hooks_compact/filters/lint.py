@@ -84,9 +84,16 @@ def filter_cargo_clippy(output: str, command: str, exit_code: int | None) -> str
                 ):
                     i += 1
 
-            w = warnings[rule_code]
+            # For "misc" warnings (no lint code), use description as the grouping
+            # key so that "function `add` is never used" and "function `foo` is
+            # never used" are NOT merged — the model needs to see each unique name.
+            group_key = rule_code if rule_code != "misc" else f"misc:{description}"
+
+            w = warnings[group_key]
             if w["count"] == 0:
                 w["description"] = description
+                # Store original rule_code for display
+                w["rule_code"] = rule_code
             w["count"] += 1
             if location and len(w["locations"]) < 3:
                 w["locations"].append(location)
@@ -101,15 +108,17 @@ def filter_cargo_clippy(output: str, command: str, exit_code: int | None) -> str
     result_parts.extend(errors)
 
     # Grouped warnings
-    for rule_code, data in sorted(warnings.items(), key=lambda x: -x[1]["count"]):
+    for _key, data in sorted(warnings.items(), key=lambda x: -x[1]["count"]):
         n = data["count"]
         desc = data["description"]
+        # Use the stored rule_code for display (may be the original lint code or "misc")
+        display_code = data.get("rule_code", "misc")
         if n == 1 and data["locations"]:
             result_parts.append(
-                f"warning[{rule_code}]: {desc} ({data['locations'][0]})"
+                f"warning[{display_code}]: {desc} ({data['locations'][0]})"
             )
         else:
-            result_parts.append(f"warning[{rule_code}]: {desc} ({n}×)")
+            result_parts.append(f"warning[{display_code}]: {desc} ({n}×)")
             for loc in data["locations"][:2]:
                 result_parts.append(f"  {loc}")
 
@@ -257,6 +266,9 @@ def filter_eslint(output: str, command: str, exit_code: int | None) -> str:
     Groups by rule name, deduplicates, and counts occurrences.
     """
     if exit_code == 0:
+        # Don't expand already-compact clean output
+        if len(output.strip()) < 30:
+            return output.strip() if output.strip() else "ok (no eslint issues)"
         return "ok (no eslint issues)"
 
     lines = output.split("\n")

@@ -322,6 +322,23 @@ class TestFilterGitSimple:
         # Should preserve meaningful info like "files changed"
         assert len(result) <= len(output)
 
+    def test_commit_success_preserves_commit_message(self):
+        """git commit output must include the commit hash and message line.
+
+        Without this, the model doesn't know which commit was created or its subject.
+        """
+        output = (
+            "[main def5678] feat: implement hooks-compact filter\n"
+            " 5 files changed, 120 insertions(+), 3 deletions(-)\n"
+            " create mode 100644 amplifier_module_hooks_compact/hook.py\n"
+        )
+        result = filter_git_simple(output, "git commit", 0)
+        # The "[branch hash] message" line must be preserved
+        assert "def5678" in result, f"Commit hash missing from:\n{result}"
+        assert "feat: implement hooks-compact filter" in result, (
+            f"Commit message missing from:\n{result}"
+        )
+
     def test_already_up_to_date(self):
         output = "Already up to date.\n"
         result = filter_git_simple(output, "git pull", 0)
