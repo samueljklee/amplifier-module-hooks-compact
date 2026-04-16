@@ -5,7 +5,7 @@ bundle:
   description: Compress verbose bash output before it enters the LLM context window
 
 includes:
-  - bundle: hooks-compact:behaviors/compact
+  - bundle: hooks-compact:behaviors/compact.yaml
 ---
 
 # hooks-compact
