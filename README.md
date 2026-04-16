@@ -4,7 +4,7 @@ An [Amplifier](https://github.com/microsoft/amplifier) hook module that compress
 
 **Why?** A typical AI coding session generates tens of thousands of tokens of raw bash output (`git status` boilerplate, test runner noise, compilation progress). With hooks-compact, the signal reaches the model and the noise doesn't.
 
-> **Measured in live sessions:** `git diff` 96.2% · `git status` 80.4%
+> **Measured in live sessions:** `git diff` 96.2% · `git status` 80.4% · `pytest -v` 99.9%
 
 ---
 
@@ -72,8 +72,8 @@ hooks:
 
 ### Python Filters (complex, structured parsing)
 
-Numbers marked ✓ are measured from live Amplifier sessions. Others are computed from fixture
-outputs used in unit tests.
+Numbers marked ✓ are measured from live Amplifier sessions (A/B tested, model performance
+verified). Others are computed from real command outputs in unit test fixtures.
 
 | Command Pattern | Strategy | Typical Savings |
 |----------------|----------|----------------|
@@ -82,13 +82,13 @@ outputs used in unit tests.
 | `git log` | One-line-per-commit format | 0–80%<sup>†</sup> |
 | `git push/pull/add/commit` | `"ok"` on success, errors on failure | ~92% |
 | `cargo test` | `"✓ N passed (Xs)"` on all-pass; failures only on partial | ~99% |
-| `pytest` | Same asymmetric behavior as cargo test | ~99% |
+| `pytest` | Same asymmetric behavior as cargo test | **99.9%** ✓ |
 | `npm test` (jest/vitest/mocha) | Detected automatically, same pattern | ~85–99% |
 | `cargo build` | `"ok"` on success; errors + warnings on failure | ~90% |
 | `tsc` | Error-only, strip success noise | ~85% |
 | `npm run build` | Success short-circuit | ~80% |
 | `cargo clippy` | Group-by-rule, deduplicate, count occurrences | ~80% |
-| `ruff check` | Same group-by-rule pattern | ~80% |
+| `ruff check` | Group-by-rule; handles both concise and new full/rich format | **93%** |
 | `eslint` | Same group-by-rule pattern | ~75% |
 
 <sup>†</sup> `git log --oneline` is already compact — savings are minimal by design (the model
