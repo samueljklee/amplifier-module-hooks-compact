@@ -111,6 +111,36 @@ class TestFilterGitStatus:
         result = filter_git_status(output, "git status", 0)
         assert "2 commits" in result
 
+    def test_large_untracked_list_truncated(self):
+        """When a repo has many untracked files, the list is truncated to avoid bloat."""
+        # Build a status with 25 untracked files
+        lines = ["On branch main", "", "Untracked files:"]
+        lines.append('  (use "git add ..." to include in what will be committed)')
+        for i in range(25):
+            lines.append(f"\tfile_{i:02d}.txt")
+        output = "\n".join(lines) + "\n"
+        result = filter_git_status(output, "git status", 0)
+        # Count shows 25
+        assert "(25)" in result
+        # But file list is truncated
+        assert "+15 more" in result or "more" in result
+        # Result is significantly shorter
+        assert len(result) < len(output) * 0.7
+
+    def test_large_untracked_list_shows_first_n(self):
+        """First 10 files are always shown even with large untracked list."""
+        lines = ["On branch main", "", "Untracked files:"]
+        lines.append('  (use "git add ..." to include in what will be committed)')
+        for i in range(15):
+            lines.append(f"\tfile_{i:02d}.py")
+        output = "\n".join(lines) + "\n"
+        result = filter_git_status(output, "git status", 0)
+        # First 10 files should be in output
+        assert "file_00.py" in result
+        assert "file_09.py" in result
+        # 11th file should not be listed directly (it's in the "+5 more" count)
+        assert "(15)" in result
+
 
 # ── git diff ──────────────────────────────────────────────────────────────────
 
@@ -132,6 +162,38 @@ class TestFilterGitDiff:
         result = filter_git_diff(self.SAMPLE_DIFF_STAT, "git diff", 0)
         assert "files changed" in result
 
+    def test_unified_diff_keeps_changed_lines(self):
+        """Unified diff: model must see what changed, not just that something changed."""
+        fixture = (FIXTURES / "git_diff_unified.txt").read_text()
+        result = filter_git_diff(fixture, "git diff", 0)
+        # Must include actual added/removed lines so model knows what changed
+        assert "+" in result or "-" in result
+
+    def test_unified_diff_keeps_filenames(self):
+        """Unified diff: file names must be visible."""
+        fixture = (FIXTURES / "git_diff_unified.txt").read_text()
+        result = filter_git_diff(fixture, "git diff", 0)
+        assert "src/auth.py" in result or "auth.py" in result
+
+    def test_unified_diff_significantly_shorter(self):
+        """Unified diff: still achieves meaningful compression."""
+        fixture = (FIXTURES / "git_diff_unified.txt").read_text()
+        result = filter_git_diff(fixture, "git diff", 0)
+        # Should compress by at least 40% (unified diffs are verbose with context lines)
+        assert len(result) < len(fixture) * 0.6
+
+    def test_unified_diff_preserves_hunk_headers(self):
+        """Hunk @@ markers should be included to give structural context."""
+        fixture = (FIXTURES / "git_diff_unified.txt").read_text()
+        result = filter_git_diff(fixture, "git diff", 0)
+        assert "@@" in result
+
+    def test_stat_only_output(self):
+        """Pure --stat output (no unified diff) should just show stat table."""
+        result = filter_git_diff(self.SAMPLE_DIFF_STAT, "git diff --stat", 0)
+        assert "src/auth.py" in result
+        assert "files changed" in result
+
     def test_strips_raw_diff_content(self):
         full_diff = (
             "diff --git a/src/auth.py b/src/auth.py\n"
@@ -148,10 +210,28 @@ class TestFilterGitDiff:
             "1 file changed, 2 insertions(+)\n"
         )
         result = filter_git_diff(full_diff, "git diff", 0)
-        # Diffstat kept
+        # File name is kept
         assert "src/auth.py" in result
-        # But raw diff hunks should not be emphasized
+        # Result is shorter than original (context lines stripped)
         assert len(result) < len(full_diff)
+
+    def test_large_diff_capped_at_max_lines(self):
+        """Very large diffs should not produce unbounded output."""
+        # Build a large fake diff with 20 files
+        lines = []
+        for i in range(20):
+            lines.append(f"diff --git a/file{i}.py b/file{i}.py")
+            lines.append("index abc..def 100644")
+            lines.append(f"--- a/file{i}.py")
+            lines.append(f"+++ b/file{i}.py")
+            lines.append("@@ -1,5 +1,10 @@")
+            for j in range(10):
+                lines.append(f"+    new_line_{j} = True")
+                lines.append(f"-    old_line_{j} = False")
+        large_diff = "\n".join(lines)
+        result = filter_git_diff(large_diff, "git diff", 0)
+        # Output should be bounded (not all 20 files * 20 lines = 400+ lines)
+        assert result.count("\n") < 80
 
 
 # ── git log ───────────────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ except ImportError:
                 setattr(self, k, v)
 
 
-from .filters import FilterRegistry
+from .filters import FilterRegistry, _strip_shell_prefix
 from .pipeline import preprocess
 
 logger = logging.getLogger(__name__)
@@ -252,10 +252,14 @@ class CompactHook:
         command: str = (
             tool_input.get("command", "") if isinstance(tool_input, dict) else ""
         )
-        output_obj = tool_result.get("output") if isinstance(tool_result, dict) else None
+        output_obj = (
+            tool_result.get("output") if isinstance(tool_result, dict) else None
+        )
         output: str | None = (
-            output_obj.get("stdout") if isinstance(output_obj, dict)
-            else output_obj if isinstance(output_obj, str)
+            output_obj.get("stdout")
+            if isinstance(output_obj, dict)
+            else output_obj
+            if isinstance(output_obj, str)
             else None
         )
         exit_code: int | None = (
@@ -313,7 +317,9 @@ class CompactHook:
         # Build modified data — never mutate in-place
         modified_data = copy.deepcopy(data)
         result_obj = modified_data.get("result")
-        output_obj_mod = result_obj.get("output") if isinstance(result_obj, dict) else None
+        output_obj_mod = (
+            result_obj.get("output") if isinstance(result_obj, dict) else None
+        )
         if isinstance(output_obj_mod, dict):
             # Amplifier bash tool: result.output is {"returncode": int, "stderr": str, "stdout": str}
             modified_data["result"]["output"]["stdout"] = compressed
@@ -327,9 +333,11 @@ class CompactHook:
 
         # ── Telemetry ─────────────────────────────────────────────────────────
         if self._telemetry is not None:
+            # Strip "cd /path &&" prefix so telemetry shows "git" not "cd"
+            clean_command = _strip_shell_prefix(command)
             self._telemetry.log_compression(
                 session_id=self._session_id,
-                command=command,
+                command=clean_command,
                 filter_used=filter_name,
                 input_chars=input_chars,
                 output_chars=output_chars,

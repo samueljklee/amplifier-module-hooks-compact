@@ -1,0 +1,53 @@
+diff --git a/src/auth.py b/src/auth.py
+index abc1234..def5678 100644
+--- a/src/auth.py
++++ b/src/auth.py
+@@ -38,7 +38,12 @@ class Auth:
+     def login(self, username, password):
+         """Authenticate user."""
+-        return self.token_store.get(username)
++        token = self.token_store.get(username)
++        if token is None:
++            raise AuthError(f"No token for user: {username}")
++        self.validate_token(token)
++        return token
+ 
+     def logout(self, username):
+         self.token_store.delete(username)
+@@ -52,6 +57,8 @@ class Auth:
+     def validate_token(self, token):
+-        return token is not None
++        if not token or len(token) < 32:
++            raise AuthError("Invalid token format")
++        return True
+ 
+diff --git a/README.md b/README.md
+index 111aaaa..222bbbb 100644
+--- a/README.md
++++ b/README.md
+@@ -1,5 +1,7 @@
+ # Project
+ 
++> **Note:** This project now requires Python 3.11+
++
+ ## Installation
+ 
+ Run `pip install .`
+diff --git a/tests/test_auth.py b/tests/test_auth.py
+index 333cccc..444dddd 100644
+--- a/tests/test_auth.py
++++ b/tests/test_auth.py
+@@ -10,6 +10,15 @@ class TestAuth:
+     def test_login_success(self):
+         auth = Auth()
+         auth.token_store.set("alice", "abc" * 12)
+-        assert auth.login("alice") is not None
++        result = auth.login("alice")
++        assert result is not None
++        assert len(result) >= 32
++
++    def test_login_no_token_raises(self):
++        auth = Auth()
++        with pytest.raises(AuthError):
++            auth.login("unknown_user")
++
