@@ -116,7 +116,11 @@ class CompactHook:
             )
             self._registry.register_python(
                 "npm-test",
-                r"^npm\s+(test|run\s+test)\b",
+                # Matches npm test / npm run test directly, plus standalone
+                # vitest and jest invocations (the tool-runner prefix is
+                # stripped by _strip_shell_prefix before this is evaluated,
+                # so "bunx vitest run" becomes "vitest run" here).
+                r"^npm\s+(test|run\s+test)\b|^vitest\b|^jest\b",
                 test_runners.filter_npm_test,
             )
 

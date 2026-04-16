@@ -229,3 +229,101 @@ class TestPytestPatternCoverage:
         result = hook._registry.classify("cd /repo && python3 -m pytest tests/ -v")
         assert result is not None
         assert result[0] == "pytest"
+
+
+class TestToolRunnerPrefixStripping:
+    """Tests for tool runner prefix stripping: uvx, npx, bunx, etc.
+
+    These patterns appear when the model uses package managers to run tools
+    rather than calling the tool binary directly.
+    """
+
+    def _make_hook(self):
+        from amplifier_module_hooks_compact.hook import CompactHook
+
+        return CompactHook({"enabled": True, "min_lines": 5})
+
+    # ── uvx ──────────────────────────────────────────────────────────────────
+
+    def test_uvx_ruff_matches_ruff_filter(self):
+        """uvx ruff check is the real-world command — must match ruff filter."""
+        hook = self._make_hook()
+        result = hook._registry.classify("uvx ruff check /tmp/file.py")
+        assert result is not None, "uvx ruff check should match a filter"
+        assert result[0] == "ruff", f"Expected 'ruff' filter, got {result[0]!r}"
+
+    def test_uvx_pytest_matches_pytest_filter(self):
+        """uvx pytest should match pytest filter."""
+        hook = self._make_hook()
+        result = hook._registry.classify("uvx pytest tests/")
+        assert result is not None
+        assert result[0] == "pytest"
+
+    def test_cd_prefix_plus_uvx_ruff(self):
+        """cd /path && uvx ruff check should match ruff filter."""
+        hook = self._make_hook()
+        result = hook._registry.classify(
+            "cd /Users/samule/repo && uvx ruff check /tmp/lint_issues.py"
+        )
+        assert result is not None
+        assert result[0] == "ruff"
+
+    # ── npx ──────────────────────────────────────────────────────────────────
+
+    def test_npx_eslint_matches_eslint_filter(self):
+        """npx eslint should match eslint filter."""
+        hook = self._make_hook()
+        result = hook._registry.classify("npx eslint src/")
+        assert result is not None
+        assert result[0] == "eslint"
+
+    # ── bunx ─────────────────────────────────────────────────────────────────
+
+    def test_bunx_vitest_matches_npm_test_filter(self):
+        """bunx vitest should match npm-test filter (vitest detected inside)."""
+        hook = self._make_hook()
+        result = hook._registry.classify("bunx vitest run")
+        # vitest/npm_test filter should match
+        assert result is not None, "bunx vitest should match a test filter"
+
+    # ── _strip_shell_prefix directly ─────────────────────────────────────────
+
+    def test_strip_uvx(self):
+        from amplifier_module_hooks_compact.filters import _strip_shell_prefix
+
+        assert _strip_shell_prefix("uvx ruff check .") == "ruff check ."
+
+    def test_strip_uv_run(self):
+        from amplifier_module_hooks_compact.filters import _strip_shell_prefix
+
+        assert _strip_shell_prefix("uv run pytest -v") == "pytest -v"
+
+    def test_strip_npx(self):
+        from amplifier_module_hooks_compact.filters import _strip_shell_prefix
+
+        assert _strip_shell_prefix("npx eslint src/") == "eslint src/"
+
+    def test_strip_poetry_run(self):
+        from amplifier_module_hooks_compact.filters import _strip_shell_prefix
+
+        assert _strip_shell_prefix("poetry run pytest") == "pytest"
+
+    def test_strip_python_m(self):
+        from amplifier_module_hooks_compact.filters import _strip_shell_prefix
+
+        assert _strip_shell_prefix("python -m pytest") == "pytest"
+
+    def test_strip_python3_m(self):
+        from amplifier_module_hooks_compact.filters import _strip_shell_prefix
+
+        assert _strip_shell_prefix("python3 -m ruff check .") == "ruff check ."
+
+    def test_strip_cd_then_uvx(self):
+        from amplifier_module_hooks_compact.filters import _strip_shell_prefix
+
+        assert _strip_shell_prefix("cd /path && uvx ruff check .") == "ruff check ."
+
+    def test_no_prefix_unchanged(self):
+        from amplifier_module_hooks_compact.filters import _strip_shell_prefix
+
+        assert _strip_shell_prefix("git status") == "git status"

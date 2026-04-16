@@ -18,28 +18,71 @@ from typing import Any, Callable
 PythonFilter = Callable[[str, str, "int | None"], str]
 
 
-# Matches one or more leading "cd /some/path &&" or "cd /some/path;" segments
-# so classify() can strip them before pattern matching.
+# Matches one or more leading "cd /some/path &&" or "cd /some/path;" segments.
 # Examples that are stripped:
 #   "cd /foo &&"      "cd /foo;"     "cd /a && cd /b &&"
 _CD_PREFIX_RE = re.compile(r"^(?:cd\s+\S+\s*(?:&&|;)\s*)+")
 
+# Matches tool-runner prefixes that wrap the real command.
+# These are stripped so filter patterns anchored with '^' work correctly.
+# Examples:
+#   "uvx ruff check ."           -> "ruff check ."
+#   "uv run pytest -v"           -> "pytest -v"
+#   "npx eslint src/"            -> "eslint src/"
+#   "poetry run pytest"          -> "pytest"
+#   "python -m pytest"           -> "pytest"
+#   "python3 -m ruff check ."    -> "ruff check ."
+#   "bunx vitest run"            -> "vitest run"
+_TOOL_RUNNER_RE = re.compile(
+    r"^(?:"
+    r"uvx\s+"  # uv tool runner: uvx ruff check
+    r"|uv\s+run\s+"  # uv project runner: uv run pytest
+    r"|npx\s+"  # npm package runner: npx eslint
+    r"|bunx\s+"  # bun package runner: bunx vitest
+    r"|poetry\s+run\s+"  # poetry runner: poetry run pytest
+    r"|pnpm\s+(?:exec\s+|dlx\s+)?"  # pnpm runners: pnpm exec / pnpm dlx
+    r"|yarn\s+(?:exec\s+|dlx\s+)?"  # yarn runners: yarn exec / yarn dlx
+    r"|python3?\s+-m\s+"  # module runner: python -m pytest / python3 -m ruff
+    r")"
+)
+
 
 def _strip_shell_prefix(command: str) -> str:
-    """Strip leading cd-directory-change segments from a shell command string.
+    """Strip leading shell prefixes from a command string before classification.
 
-    Amplifier's bash tool frequently prepends ``cd /path &&`` before the
-    real command.  Stripping those prefixes lets filter patterns that are
-    anchored with ``^`` (e.g. ``^git\\s+status``) match correctly.
+    Handles two kinds of prefixes that Amplifier's bash tool frequently adds:
+
+    1. **Directory changes**: ``cd /path &&`` / ``cd /path;`` segments.
+    2. **Tool runners**: ``uvx``, ``uv run``, ``npx``, ``poetry run``,
+       ``python -m``, ``bunx``, ``pnpm exec``, ``yarn dlx``, etc.
+
+    Stripping these prefixes lets filter patterns that are anchored with
+    ``^`` (e.g. ``^git``, ``^ruff``, ``^pytest``) match correctly even when
+    the model invokes a command through a runner or from a different directory.
 
     Args:
-        command: The raw bash command string, possibly containing ``cd`` prefixes.
+        command: The raw bash command string.
 
     Returns:
-        The command with any leading ``cd /path &&`` / ``cd /path;`` segments
-        removed.  Returns the original string unchanged when no prefix is found.
+        The command with any leading directory-change and/or tool-runner
+        segments removed.  Returns the original string unchanged when no
+        strippable prefix is found.
+
+    Examples:
+        >>> _strip_shell_prefix("cd /repo && uvx ruff check .")
+        "ruff check ."
+        >>> _strip_shell_prefix("uv run pytest -v")
+        "pytest -v"
+        >>> _strip_shell_prefix("npx eslint src/")
+        "eslint src/"
+        >>> _strip_shell_prefix("git status")
+        "git status"
     """
-    return _CD_PREFIX_RE.sub("", command)
+    # First strip cd-prefix chains (may appear before or without a runner)
+    after_cd = _CD_PREFIX_RE.sub("", command)
+    # Then strip a single tool-runner prefix if present
+    after_runner = _TOOL_RUNNER_RE.sub("", after_cd)
+    return after_runner
 
 
 class FilterRegistry:
@@ -105,10 +148,14 @@ class FilterRegistry:
         Checks priority buckets in order: user YAML → Python → built-in YAML.
         First match wins.
 
-        Strips leading ``cd /path &&`` / ``cd /path;`` shell prefixes before
-        matching so that patterns anchored with ``^`` (e.g. ``^git\\s+status``)
-        work correctly even when Amplifier's bash tool prepends a directory
-        change to the command string.
+        Strips leading shell prefixes before matching so that patterns anchored
+        with ``^`` (e.g. ``^git``, ``^ruff``, ``^pytest``) work correctly even
+        when Amplifier's bash tool prepends directory changes or the model uses
+        a tool runner.  Two kinds of prefixes are stripped:
+
+        - **Directory changes**: ``cd /path &&`` / ``cd /path;`` chains.
+        - **Tool runners**: ``uvx``, ``uv run``, ``npx``, ``poetry run``,
+          ``python -m``, ``bunx``, ``pnpm exec``, ``yarn dlx``.
 
         Args:
             command: The bash command string to classify.
