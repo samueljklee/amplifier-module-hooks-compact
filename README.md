@@ -4,9 +4,11 @@ An [Amplifier](https://github.com/microsoft/amplifier) hook module that compress
 
 **Why?** A typical AI coding session generates tens of thousands of tokens of raw bash output (`git status` boilerplate, test runner noise, compilation progress). With hooks-compact, the signal reaches the model and the noise doesn't.
 
-> **Measured in live Amplifier A/B sessions (✓):** `git diff` 96.2% · `git status` 80.4% · `pytest` all-pass 99.9% · `pytest` failures 39.1%<sup>†</sup> · `ruff check` 83.4%<sup>‡</sup>
+> **Measured in live Amplifier A/B sessions (✓):** `git diff` 96.2% · `git status` 80.4% · `pytest` all-pass 98.7% · `pytest` failures 39–43%<sup>†</sup> · `ruff check` 83.4%<sup>‡</sup> · `cargo test` all-pass 92.6% · `npm test` failures 12.7%<sup>†</sup>
 >
-> **Measured in simulation against real command output (sim):** `cargo test` 96% · `cargo build` 85% clean / 42% with warnings · `cargo clippy` 57% · `npm test` 92% all-pass / 23% failures<sup>†</sup> · `docker build` 53% · `curl -v` 76%
+> **Measured in simulation against real command output (sim):** `git push` 93% · `git pull` 72% · `cargo build` 65% errors / 41% with warnings · `cargo clippy` 74% · `eslint` 78% · `npm test` all-pass 95% · `docker build` 60% · `pip install` 64% · `curl -v` 44%
+>
+> **All A/B tests: identical model turns with and without the hook** — compression never caused model retries in any verified scenario.
 >
 > <sup>†</sup> Failure case: full error details preserved so the model has everything it needs to fix the issues.
 > <sup>‡</sup> All unique violation descriptions shown per rule code — model sees every unused import name, every unused variable.
@@ -79,24 +81,24 @@ hooks:
 
 Numbers marked ✓ are from live A/B sessions. Numbers marked (sim) are from simulation against real command output. All A/B tests show identical model turns with and without the hook.
 
-| Command Pattern | Strategy | All-pass | With failures | Notes |
-|----------------|----------|----------|---------------|-------|
+| Command Pattern | Strategy | All-pass / Clean | With failures / Errors | Notes |
+|----------------|----------|-----------------|----------------------|-------|
 | `git status` | Branch + file groups, strip hints, cap lists at 10 | **80%** ✓ | — | |
 | `git diff` | Diffstat + first 8 changed lines per file (≤5 files) | **96%** ✓ | **96%** ✓ | |
 | `git log` | One-line-per-commit format | ~0%<sup>†</sup> | — | |
-| `git push` | Compact ref on success; preserve errors on failure | **92%** (sim) | **8%** (correct) | Errors always preserved |
-| `git pull` | Branch refs + file counts; strip remote chatter | **66%** (sim) | — | |
+| `git push` | Compact ref on success; preserve errors on failure | **93%** (sim) | **14%** (correct) | Errors always preserved |
+| `git pull` | Branch refs + file counts; strip remote chatter | **72%** (sim) | — | |
 | `git add` | Returns `"ok"` (no output on success) | 0% (empty) | — | |
-| `git commit` | Hash+message + files changed; strip remote noise | ~3% (sim) | — | Already compact |
-| `cargo test` | `"✓ N passed (Xs)"` on all-pass; full failure blocks with panics | **96%** (sim) | **47%** (sim) | Full panics preserved |
-| `pytest` | Same asymmetric behavior | **99.9%** ✓ | **39%** ✓<sup>‡</sup> | Full tracebacks preserved |
-| `npm test` (jest/vitest/mocha) | Auto-detected; Jest failures include Expected/Received details | **92%** (sim) | **23%** (sim) | Full error blocks preserved |
-| `cargo build` | `"ok"` on success; errors + warning locations on failure | **85%** (sim) | **56%** (sim) | |
-| `tsc` | Error-only; `"ok"` on clean; count summary on failure | **0%**<sup>§</sup> (sim) | ~−6%<sup>§</sup> (sim) | Adds count summary |
-| `npm run build` | `"ok"` on success; error lines on failure | ~80% | — | |
-| `cargo clippy` | Each dead-code warning listed separately; group by lint code | **57%** (sim) | — | All function names shown |
-| `ruff check` | Group-by-rule; all unique descriptions per rule code | — | **83%** ✓<sup>¶</sup> | Every import name shown |
-| `eslint` | Group-by-rule; passthrough for already-compact clean output | **0%**<sup>**</sup> (sim) | **68%** (sim) | |
+| `git commit` | Hash+message + files changed; strip remote noise | ~2% (sim) | — | Already compact |
+| `cargo test` | `"✓ N passed (Xs)"` on all-pass; full failure blocks with panics | **93%** ✓ | **39%** (sim) | Full panics preserved |
+| `pytest` | Same asymmetric behavior | **99%** ✓ | **39–43%** ✓<sup>‡</sup> | Full tracebacks preserved |
+| `npm test` (jest/vitest/mocha) | Auto-detected; Mocha failures show all numbered failure blocks | **95%** (sim) | **13%** ✓<sup>‡</sup> | Full error blocks preserved |
+| `cargo build` | `"ok"` on success; errors + warning locations on failure | **41%** (sim) | **65%** (sim) | Warnings kept on success |
+| `tsc` | Error-only; `"ok"` on clean; count summary on failure | 0%<sup>§</sup> (sim) | ~−7%<sup>§</sup> (sim) | Adds count summary |
+| `npm run build` | `"ok"` on success; error lines on failure | **80%** (sim) | — | |
+| `cargo clippy` | Each warning listed separately; group by lint code | **74%** (sim) | — | All function names shown |
+| `ruff check` | Group-by-rule; all unique descriptions per rule code | 0% (already short) | **83%** ✓<sup>¶</sup> | Every import name shown |
+| `eslint` | Group-by-rule; passthrough for already-compact clean output | 0%<sup>**</sup> | **78%** (sim) | |
 
 <sup>†</sup> `git log --oneline` is already compact — minimal savings by design.
 
@@ -125,11 +127,11 @@ whether the model uses the tool directly or via a package runner:
 
 | Command Pattern | Strategy | Savings |
 |----------------|----------|---------|
-| `make` | Strip `make[N]:` entering/leaving directory lines; `"make: ok"` on empty | ~27–94% |
-| `docker build` | Strip BuildKit internal/cached/transfer lines; keep steps and final image | **53%** (sim) |
-| `pip install` | Strip download progress bars; `"pip: ok"` when all already satisfied | 52–95% (sim) |
-| `brew install` | Strip fetch/pour lines; short-circuit already-installed | 31–61% (sim) |
-| `curl` (verbose) | Strip connection handshake, request/response headers; keep body | **76%** (sim) |
+| `make` | Strip `make[N]:` entering/leaving directory lines; `"make: ok"` on empty | 3–94% (varies by Makefile size) |
+| `docker build` | Strip BuildKit internal/cached/transfer lines; keep steps and final image | **60%** (sim) |
+| `pip install` | Strip download progress bars; `"pip: ok"` when all already satisfied | **64%** (sim) |
+| `brew install` | Strip fetch/pour lines; short-circuit already-installed | 12–61% (sim) |
+| `curl` (verbose) | Strip connection handshake, request/response headers; keep body | **44%** (sim) |
 
 **Docker note**: Both legacy format (` ---> <hash>`, `Using cache`) and modern BuildKit format (` => [internal]`, ` => CACHED [N/M]`, ` => => transferring`) are handled.
 
@@ -225,7 +227,7 @@ sqlite3 ~/.amplifier/hooks-compact/telemetry.db \
 ## Regression Eval System
 
 The `eval/` directory contains a regression harness to verify compression doesn't
-hurt model performance when filters change:
+hurt model performance when filters change. Includes **26 test cases** covering all filter categories:
 
 ```bash
 # Run all test cases (A/B with and without the hook)
