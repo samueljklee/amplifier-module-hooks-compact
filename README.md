@@ -1,14 +1,16 @@
 # hooks-compact
 
-An [Amplifier](https://github.com/microsoft/amplifier) hook module that compresses bash tool output by 60–90% before it enters the LLM context window. Inspired by [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk).
+An [Amplifier](https://github.com/microsoft/amplifier) hook module that compresses bash tool output by 60–96% before it enters the LLM context window. Inspired by [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk).
 
-**Why?** A typical 30-minute AI coding session generates ~118,000 tokens of raw bash output (`git status` boilerplate, compilation progress, test runner noise). With hooks-compact, that drops to ~23,900 tokens — an **80% reduction** — without hiding anything that matters.
+**Why?** A typical AI coding session generates tens of thousands of tokens of raw bash output (`git status` boilerplate, test runner noise, compilation progress). With hooks-compact, the signal reaches the model and the noise doesn't.
+
+> **Measured in live sessions:** `git diff` 96.2% · `git status` 80.4%
 
 ---
 
 ## Quick Start
 
-One command to add hooks-compact to your app:
+One command to add hooks-compact to your app bundle:
 
 ```bash
 amplifier bundle add git+https://github.com/samueljklee/amplifier-module-hooks-compact@main#subdirectory=behaviors/compact.yaml --app
@@ -26,7 +28,7 @@ hooks:
     source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main
     config:
       enabled: true
-      min_lines: 20
+      min_lines: 5
       debug: false
 ```
 
@@ -53,7 +55,7 @@ hooks:
     source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main
     config:
       enabled: true           # set false to disable entirely
-      min_lines: 20           # skip compression for output under N lines
+      min_lines: 5            # skip compression for output under N lines
       strip_ansi: true        # strip ANSI color codes before filtering
       show_savings: true      # show "compressed: X → Y chars (Z%)" info message
       debug: false            # show before/after comparison (for filter development)
@@ -70,21 +72,27 @@ hooks:
 
 ### Python Filters (complex, structured parsing)
 
+Numbers marked ✓ are measured from live Amplifier sessions. Others are computed from fixture
+outputs used in unit tests.
+
 | Command Pattern | Strategy | Typical Savings |
 |----------------|----------|----------------|
-| `git status` | Extract branch + file groups, strip hints | 75% |
-| `git diff` | Keep diffstat summary only | 75% |
-| `git log` | One-line-per-commit format | 80% |
-| `git push/pull/add/commit` | `"ok"` on success, errors on failure | 92% |
-| `cargo test` | `"✓ N passed (Xs)"` on all-pass; failures only on partial | 90–99% |
-| `pytest` | Same asymmetric behavior as cargo test | 90–99% |
-| `npm test` (jest/vitest/mocha) | Detected automatically, same pattern | 85–99% |
-| `cargo build` | `"ok"` on success; errors + warnings on failure | 85% |
-| `tsc` | Error-only, strip success noise | 80% |
-| `npm run build` | Success short-circuit | 80% |
-| `cargo clippy` | Group-by-rule, deduplicate, count occurrences | 80% |
-| `ruff check` | Same group-by-rule pattern | 80% |
-| `eslint` | Same group-by-rule pattern | 75% |
+| `git status` | Extract branch + file groups, strip hints, truncate large lists | **80%** ✓ |
+| `git diff` | Diffstat + first 8 changed lines per file (≤5 files) | **96%** ✓ |
+| `git log` | One-line-per-commit format | 0–80%<sup>†</sup> |
+| `git push/pull/add/commit` | `"ok"` on success, errors on failure | ~92% |
+| `cargo test` | `"✓ N passed (Xs)"` on all-pass; failures only on partial | ~99% |
+| `pytest` | Same asymmetric behavior as cargo test | ~99% |
+| `npm test` (jest/vitest/mocha) | Detected automatically, same pattern | ~85–99% |
+| `cargo build` | `"ok"` on success; errors + warnings on failure | ~90% |
+| `tsc` | Error-only, strip success noise | ~85% |
+| `npm run build` | Success short-circuit | ~80% |
+| `cargo clippy` | Group-by-rule, deduplicate, count occurrences | ~80% |
+| `ruff check` | Same group-by-rule pattern | ~80% |
+| `eslint` | Same group-by-rule pattern | ~75% |
+
+<sup>†</sup> `git log --oneline` is already compact — savings are minimal by design (the model
+already gets a clean one-liner per commit). Verbose `git log` format saves ~80%.
 
 ### YAML Filters (declarative, regex pipelines)
 
@@ -139,7 +147,7 @@ User filters have **higher priority** than built-in filters, so you can override
 Set `debug: true` to see exactly what's happening for every compression:
 
 ```
-┌─ hooks-compact debug ──────────────────────────────────────────────
+┌─ hooks-compact debug ──────────────────────────────────────────────────
 │ Command:  cargo test
 │ Filter:   cargo-test (Python)
 │ Input:    4823 chars (262 lines)
@@ -153,7 +161,7 @@ Set `debug: true` to see exactly what's happening for every compression:
 │
 │ ── COMPRESSED ──
 │ ✓ 262 passed (0.08s)
-└────────────────────────────────────────────────────────────────────
+└────────────────────────────────────────────────────────────────────────
 ```
 
 Debug output goes to the user message only — **not injected into LLM context**.
@@ -171,6 +179,44 @@ telemetry:
 ```
 
 **What is stored:** command name (first token only, no args), filter used, character counts, savings percentage, and exit code. No command arguments, no output content, no file paths.
+
+Query your stats:
+
+```bash
+sqlite3 ~/.amplifier/hooks-compact/telemetry.db \
+  "SELECT command, filter_used, AVG(savings_pct) as avg, COUNT(*) as n
+   FROM compression_log
+   WHERE session_id NOT LIKE 'test%'
+   GROUP BY command
+   ORDER BY avg DESC"
+```
+
+---
+
+## Regression Eval System
+
+The `eval/` directory contains a regression harness to verify compression doesn't
+hurt model performance when filters change:
+
+```bash
+# Run all test cases (A/B with and without the hook)
+./eval/run-eval.sh
+
+# Run a single test case
+./eval/run-eval.sh git-workflow
+
+# Analyze two existing sessions manually
+./eval/analyze.sh <session-a-id> <session-b-id> /path/to/working-dir
+
+# List available test cases
+./eval/run-eval.sh --list
+```
+
+**PASS criteria**: Session A (with hook) must not make more than 1 extra bash tool call
+vs Session B (without). This catches the key regression pattern — over-compression causing
+the model to retry commands to get more context.
+
+See [`eval/README.md`](eval/README.md) for full documentation.
 
 ---
 

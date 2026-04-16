@@ -174,3 +174,58 @@ class TestFilterRegistry:
         result = registry.classify("cd /a && cd /b && git diff")
         assert result is not None
         assert result[0] == "git-diff"
+
+
+class TestPytestPatternCoverage:
+    """Verify the pytest pattern in CompactHook covers common invocations."""
+
+    def _make_hook(self):
+        from amplifier_module_hooks_compact.hook import CompactHook
+
+        return CompactHook({"enabled": True, "min_lines": 5})
+
+    def test_bare_pytest(self):
+        hook = self._make_hook()
+        result = hook._registry.classify("pytest tests/")
+        assert result is not None
+        assert result[0] == "pytest"
+
+    def test_uv_run_pytest(self):
+        hook = self._make_hook()
+        result = hook._registry.classify("uv run pytest -q")
+        assert result is not None
+        assert result[0] == "pytest"
+
+    def test_python_m_pytest(self):
+        hook = self._make_hook()
+        result = hook._registry.classify("python -m pytest tests/")
+        assert result is not None
+        assert result[0] == "pytest"
+
+    def test_python3_m_pytest(self):
+        """python3 -m pytest should match (new in this release)."""
+        hook = self._make_hook()
+        result = hook._registry.classify("python3 -m pytest tests/")
+        assert result is not None
+        assert result[0] == "pytest"
+
+    def test_poetry_run_pytest(self):
+        """poetry run pytest should match (new in this release)."""
+        hook = self._make_hook()
+        result = hook._registry.classify("poetry run pytest")
+        assert result is not None
+        assert result[0] == "pytest"
+
+    def test_cd_prefix_uv_run_pytest(self):
+        hook = self._make_hook()
+        result = hook._registry.classify(
+            "cd /Users/samule/repo/amplifier-module-hooks-compact && uv run pytest -q"
+        )
+        assert result is not None
+        assert result[0] == "pytest"
+
+    def test_cd_prefix_python3_m_pytest(self):
+        hook = self._make_hook()
+        result = hook._registry.classify("cd /repo && python3 -m pytest tests/ -v")
+        assert result is not None
+        assert result[0] == "pytest"

@@ -109,7 +109,9 @@ class CompactHook:
             )
             self._registry.register_python(
                 "pytest",
-                r"^(python\s+-m\s+)?pytest\b|^uv\s+run\s+pytest\b",
+                r"^(python[23]?(?:\.[0-9]+)?\s+-m\s+)?pytest\b"
+                r"|^uv\s+run\s+pytest\b"
+                r"|^poetry\s+run\s+pytest\b",
                 test_runners.filter_pytest,
             )
             self._registry.register_python(

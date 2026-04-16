@@ -12,3 +12,4 @@ telemetry.db
 docs/
 *.db
 .DS_Store
+eval/results/

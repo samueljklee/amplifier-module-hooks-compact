@@ -1,0 +1,98 @@
+test_cases:
+  # ── git workflow ───────────────────────────────────────────────────────────
+  - id: git-workflow
+    name: "Git workflow (status + log + diff)"
+    category: git
+    prompt: "check git status, show me the last 10 commits, and show me the diff of any uncommitted changes"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands:
+      - git status
+      - git log
+      - git diff
+    # Baseline: 3 tool calls. Allow 1 extra in case model confirms or retries.
+    max_acceptable_tool_calls: 4
+    # Model should NOT need to re-run commands because compressed output was unclear.
+    max_retries: 0
+
+  # ── test runner ────────────────────────────────────────────────────────────
+  - id: test-runner
+    name: "Python test runner (pytest — 236 tests)"
+    category: test-runner
+    prompt: "run the test suite and tell me if all tests pass. use uv run pytest -q"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands:
+      - pytest
+      - uv run pytest
+    # 1 pytest run + maybe 1 follow-up if failures found. 2 is baseline.
+    max_acceptable_tool_calls: 3
+    max_retries: 0
+
+  # ── linter ─────────────────────────────────────────────────────────────────
+  - id: linter
+    name: "Python linter (ruff check)"
+    category: lint
+    prompt: "check the code quality with ruff and report any issues. run: uv run ruff check amplifier_module_hooks_compact/ tests/"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands:
+      - ruff check
+      - uv run ruff
+    # 1-2 ruff runs (src + tests separately, or combined)
+    max_acceptable_tool_calls: 3
+    max_retries: 0
+
+  # ── build check ────────────────────────────────────────────────────────────
+  - id: build-check
+    name: "Build/import check (verify module imports cleanly)"
+    category: build
+    prompt: "verify the module can be imported without errors. run: python3 -c \"import amplifier_module_hooks_compact; print('ok')\" and also check if there are any syntax errors in the source files"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands:
+      - python3 -c
+      - python -c
+    # Simple import check — should be 1-2 commands
+    max_acceptable_tool_calls: 4
+    max_retries: 0
+
+  # ── mixed heavy ────────────────────────────────────────────────────────────
+  - id: mixed-heavy
+    name: "Mixed heavy session (git + tests + lint + summary)"
+    category: mixed
+    prompt: "review the project health of the hooks-compact module: (1) check git status, (2) run the tests with uv run pytest -q, (3) run the linter with uv run ruff check amplifier_module_hooks_compact/, then give me a health summary"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands:
+      - git status
+      - pytest
+      - ruff check
+    # git + pytest + ruff = 3 tool calls minimum, allow up to 6
+    max_acceptable_tool_calls: 6
+    max_retries: 1
+
+  # ── short output (below min_lines threshold) ───────────────────────────────
+  - id: short-output
+    name: "Short output — below min_lines=5 threshold (should NOT compress)"
+    category: passthrough
+    prompt: "what branch am I on? just run git branch --show-current and tell me"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands:
+      - git branch
+      - git rev-parse
+    # Simple — 1 command
+    max_acceptable_tool_calls: 2
+    max_retries: 0
+    # This test validates that short output is NOT compressed (passthrough)
+    expect_no_compression: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PASS/FAIL criteria (applied by analyze.sh)
+# ─────────────────────────────────────────────────────────────────────────────
+pass_criteria:
+  # Session A (with hook) must not make significantly more tool calls than Session B
+  # delta_tool_calls_max: how many EXTRA tool calls we tolerate from compression
+  delta_tool_calls_max: 1
+
+  # For tests NOT marked expect_no_compression, we require at least this savings
+  min_compression_pct: 50
+
+  # Session A should generally use fewer or equal tokens overall
+  # (hook overhead adds a small amount via user_message, so we allow slight increase)
+  max_token_overhead_pct: 5
