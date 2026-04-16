@@ -167,6 +167,39 @@ class TestFilterPytest:
         result = filter_pytest(output, "pytest", 0)
         assert "5 passed" in result
 
+    # ── Quiet mode (-q) tests ─────────────────────────────────────────────────
+
+    QUIET_ALL_PASS = (
+        "........................................................................[  29%]\n"
+        "........................................................................[  59%]\n"
+        "........................................................................[  88%]\n"
+        "...........................                                              [100%]\n"
+        "243 passed in 0.39s\n"
+    )
+
+    QUIET_WITH_FAILURES = (
+        "........F..                                                              [100%]\n"
+        "FAILED tests/test_foo.py::test_bar - AssertionError: expected 1 got 2\n"
+        "1 failed, 10 passed in 0.12s\n"
+    )
+
+    def test_quiet_all_pass_compresses(self):
+        """pytest -q all-pass output must be compressed even without === delimiters."""
+        result = filter_pytest(self.QUIET_ALL_PASS, "uv run pytest -q", 0)
+        assert "243 passed" in result, f"Expected count in result but got: {result!r}"
+        assert result.count("\n") <= 1, f"Expected 1 line but got: {result!r}"
+
+    def test_quiet_all_pass_has_tick(self):
+        result = filter_pytest(self.QUIET_ALL_PASS, "uv run pytest -q", 0)
+        assert "\u2713" in result, f"Expected tick in result but got: {result!r}"
+
+    def test_quiet_all_pass_shorter_than_original(self):
+        result = filter_pytest(self.QUIET_ALL_PASS, "uv run pytest -q", 0)
+        assert len(result) < len(self.QUIET_ALL_PASS), (
+            f"Expected compressed output shorter than {len(self.QUIET_ALL_PASS)} chars, "
+            f"got {len(result)} chars"
+        )
+
 
 # ── npm test ──────────────────────────────────────────────────────────────────
 

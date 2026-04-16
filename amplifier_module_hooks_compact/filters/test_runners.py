@@ -92,11 +92,18 @@ def filter_pytest(output: str, command: str, exit_code: int | None) -> str:
     """
     lines = output.split("\n")
 
-    # Find the final summary line (last line matching the pytest result pattern)
+    # Find the final summary line (last line matching the pytest result pattern).
+    # Supports both verbose mode (=== N passed in Xs ===) and quiet mode (N passed in Xs).
     summary_line = ""
     for line in reversed(lines):
+        stripped = line.strip()
+        # Verbose mode: === 5 passed in 0.04s ===
         if re.search(r"\d+ (passed|failed|error)", line) and "===" in line:
-            summary_line = line.strip("= ").strip()
+            summary_line = stripped.strip("= ").strip()
+            break
+        # Quiet mode: "243 passed in 0.39s" or "2 failed, 1 passed in 0.12s" (no ===)
+        if re.match(r"^\d+ (passed|failed|error)", stripped):
+            summary_line = stripped
             break
 
     if not summary_line:

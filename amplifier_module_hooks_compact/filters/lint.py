@@ -126,44 +126,77 @@ def filter_cargo_clippy(output: str, command: str, exit_code: int | None) -> str
 
 # ── ruff check ────────────────────────────────────────────────────────────────
 
+# ── Concise format (old/explicit): file:line:col: CODE [*] description ──────────
 # src/main.py:10:1: F401 [*] `os` imported but unused
-# src/auth.py:45:9: E501 Line too long (120 > 88)
 _RUFF_LINE_RE = re.compile(r"^(.+):(\d+):(\d+): ([A-Z]\d+)\s+(.+)")
-_RUFF_SUMMARY_RE = re.compile(r"^Found (\d+) error")
+# ── Full format (ruff default since ~0.4): code on its own line, loc below ───
+# F401 [*] `os` imported but unused
+#  --> src/main.py:1:8
+_RUFF_FULL_CODE_RE = re.compile(r"^([A-Z]\d+)(?:\s*\[.*?\])?\s+(.+)")
+_RUFF_FULL_LOC_RE = re.compile(r"^\s+-->\s+(.+?):(\d+):(\d+)")
+_RUFF_SUMMARY_RE = re.compile(r"^Found \d+ error")
 
 
 def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
     """Compress ruff check output.
 
     Groups by rule code, deduplicates, and counts occurrences.
+    Handles both the old concise format (file:line:col: CODE desc)
+    and the new full/rich format (CODE desc \\n --> file:line:col).
     """
-    lines = output.split("\n")
-
     if exit_code == 0:
         return "ok (no ruff issues)"
 
-    # rule_code → {"description": str, "count": int, "files": set}
+    lines = output.split("\n")
+
+    # rule_code → {description: str, count: int, files: set}
     rule_groups: dict[str, dict] = defaultdict(
         lambda: {"description": "", "count": 0, "files": set()}
     )
     summary_line = ""
 
-    for line in lines:
-        m_sum = _RUFF_SUMMARY_RE.match(line)
-        if m_sum:
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Summary line: "Found N errors."
+        if _RUFF_SUMMARY_RE.match(line):
             summary_line = line.strip()
+            i += 1
             continue
 
-        m = _RUFF_LINE_RE.match(line)
-        if m:
-            file_path, _lineno, _col, rule_code, description = m.groups()
-            # Strip [*] fixable marker from description
-            description = description.replace(" [*]", "").strip()
+        # Concise format: file:line:col: CODE [*] description
+        m_concise = _RUFF_LINE_RE.match(line)
+        if m_concise:
+            file_path, _lineno, _col, rule_code, description = m_concise.groups()
+            description = re.sub(r"\s*\[.*?\]", "", description).strip()
             g = rule_groups[rule_code]
             if g["count"] == 0:
                 g["description"] = description
             g["count"] += 1
             g["files"].add(file_path)
+            i += 1
+            continue
+
+        # Full format: CODE [*] description (on its own line)
+        m_full = _RUFF_FULL_CODE_RE.match(line)
+        if m_full:
+            rule_code = m_full.group(1)
+            description = m_full.group(2).strip()
+            g = rule_groups[rule_code]
+            if g["count"] == 0:
+                g["description"] = description
+            g["count"] += 1
+            # Peek at the next non-empty line for " --> file:line:col"
+            i += 1
+            if i < len(lines):
+                m_loc = _RUFF_FULL_LOC_RE.match(lines[i])
+                if m_loc:
+                    g["files"].add(m_loc.group(1))
+                    i += 1
+            continue
+
+        i += 1
 
     result_parts: list[str] = []
     for rule_code, data in sorted(rule_groups.items(), key=lambda x: -x[1]["count"]):
