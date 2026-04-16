@@ -143,15 +143,18 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
     Groups by rule code, deduplicates, and counts occurrences.
     Handles both the old concise format (file:line:col: CODE desc)
     and the new full/rich format (CODE desc \\n --> file:line:col).
+
+    For multi-occurrence rules, shows ALL unique descriptions so the model
+    knows every specific instance (e.g. every unused import name for F401).
     """
     if exit_code == 0:
         return "ok (no ruff issues)"
 
     lines = output.split("\n")
 
-    # rule_code → {description: str, count: int, files: set}
+    # rule_code → {descriptions: list[str], count: int, files: set, locations: list[str]}
     rule_groups: dict[str, dict] = defaultdict(
-        lambda: {"description": "", "count": 0, "files": set()}
+        lambda: {"descriptions": [], "count": 0, "files": set(), "locations": []}
     )
     summary_line = ""
 
@@ -168,13 +171,14 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
         # Concise format: file:line:col: CODE [*] description
         m_concise = _RUFF_LINE_RE.match(line)
         if m_concise:
-            file_path, _lineno, _col, rule_code, description = m_concise.groups()
+            file_path, lineno, _col, rule_code, description = m_concise.groups()
             description = re.sub(r"\s*\[.*?\]", "", description).strip()
             g = rule_groups[rule_code]
-            if g["count"] == 0:
-                g["description"] = description
+            g["descriptions"].append(description)
             g["count"] += 1
             g["files"].add(file_path)
+            if len(g["locations"]) < 5:
+                g["locations"].append(f"{file_path}:{lineno}")
             i += 1
             continue
 
@@ -184,8 +188,7 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
             rule_code = m_full.group(1)
             description = m_full.group(2).strip()
             g = rule_groups[rule_code]
-            if g["count"] == 0:
-                g["description"] = description
+            g["descriptions"].append(description)
             g["count"] += 1
             # Peek at the next non-empty line for " --> file:line:col"
             i += 1
@@ -193,6 +196,8 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
                 m_loc = _RUFF_FULL_LOC_RE.match(lines[i])
                 if m_loc:
                     g["files"].add(m_loc.group(1))
+                    if len(g["locations"]) < 5:
+                        g["locations"].append(f"{m_loc.group(1)}:{m_loc.group(2)}")
                     i += 1
             continue
 
@@ -201,12 +206,33 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
     result_parts: list[str] = []
     for rule_code, data in sorted(rule_groups.items(), key=lambda x: -x[1]["count"]):
         n = data["count"]
-        files = len(data["files"])
-        desc = data["description"]
+        # Deduplicate while preserving order
+        seen_descs: set[str] = set()
+        unique_descs: list[str] = []
+        for d in data["descriptions"]:
+            if d not in seen_descs:
+                seen_descs.add(d)
+                unique_descs.append(d)
+
         if n == 1:
-            result_parts.append(f"{rule_code}: {desc}")
+            # Single occurrence: show full description with location if available
+            loc = data["locations"][0] if data["locations"] else ""
+            loc_str = f" ({loc})" if loc else ""
+            result_parts.append(f"{rule_code}: {unique_descs[0]}{loc_str}")
+        elif len(unique_descs) == 1:
+            # Multiple occurrences, all identical descriptions
+            result_parts.append(f"{rule_code}: {unique_descs[0]} ({n}×)")
+        elif len(unique_descs) <= 5:
+            # 2-5 unique descriptions: show all, separated by " | "
+            combined = " | ".join(unique_descs)
+            result_parts.append(f"{rule_code} ({n}×): {combined}")
         else:
-            result_parts.append(f"{rule_code}: {desc} ({n}× in {files} file(s))")
+            # Many unique descriptions: show first 5 + count of rest
+            shown = " | ".join(unique_descs[:5])
+            rest = len(unique_descs) - 5
+            result_parts.append(
+                f"{rule_code} ({n}×): {shown} (+{rest} more — run ruff for full list)"
+            )
 
     if summary_line:
         result_parts.append(summary_line)

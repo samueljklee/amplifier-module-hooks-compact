@@ -232,3 +232,64 @@ class TestFilterEslint:
     def test_npx_eslint_works(self):
         result = filter_eslint(self.ISSUES_OUTPUT, "npx eslint src/", 1)
         assert "no-unused-vars" in result
+
+
+# ── ruff multi-description tests (new behavior) ──────────────────────────────
+
+
+class TestFilterRuffMultiDescription:
+    """Tests for the improved ruff filter that shows all unique descriptions
+    for multi-occurrence violations (not just the first one)."""
+
+    def test_multi_occurrence_shows_all_unique_descriptions(self):
+        """When same rule has multiple violations with different descriptions,
+        all unique descriptions are shown so the model knows every instance."""
+        from amplifier_module_hooks_compact.filters.lint import filter_ruff
+
+        output = (
+            "src/main.py:1:8: F401 [*] `os` imported but unused\n"
+            "src/main.py:2:8: F401 [*] `sys` imported but unused\n"
+            "src/main.py:3:8: F401 [*] `json` imported but unused\n"
+            "Found 3 errors.\n"
+        )
+        result = filter_ruff(output, "ruff check src/main.py", 1)
+        assert "`os`" in result, f"Missing `os` in: {result!r}"
+        assert "`sys`" in result, f"Missing `sys` in: {result!r}"
+        assert "`json`" in result, f"Missing `json` in: {result!r}"
+
+    def test_multi_occurrence_f841_shows_all_variable_names(self):
+        """Two F841 violations with different variable names: both names shown."""
+        from amplifier_module_hooks_compact.filters.lint import filter_ruff
+
+        output = (
+            "src/main.py:8:5: F841 Local variable `unused_var` is assigned to but never used\n"
+            "src/main.py:16:9: F841 Local variable `data` is assigned to but never used\n"
+            "Found 2 errors.\n"
+        )
+        result = filter_ruff(output, "ruff check src/main.py", 1)
+        assert "`unused_var`" in result, f"Missing `unused_var` in: {result!r}"
+        assert "`data`" in result, f"Missing `data` in: {result!r}"
+
+    def test_single_occurrence_includes_location(self):
+        """Single-occurrence violations include file:line so model knows where to go."""
+        from amplifier_module_hooks_compact.filters.lint import filter_ruff
+
+        output = "src/main.py:17:5: E722 Do not use bare `except`\nFound 1 error.\n"
+        result = filter_ruff(output, "ruff check src/main.py", 1)
+        assert "src/main.py:17" in result, f"Expected location in: {result!r}"
+
+    def test_many_unique_descriptions_shows_truncation_notice(self):
+        """When >5 unique descriptions, a '+N more' notice is shown."""
+        from amplifier_module_hooks_compact.filters.lint import filter_ruff
+
+        lines = []
+        for i in range(8):
+            lines.append(
+                f"src/main.py:{i + 1}:1: F401 [*] `module{i}` imported but unused"
+            )
+        lines.append("Found 8 errors.")
+        output = "\n".join(lines) + "\n"
+        result = filter_ruff(output, "ruff check src/main.py", 1)
+        assert "+3 more" in result, (
+            f"Expected '+3 more' truncation notice in: {result!r}"
+        )
