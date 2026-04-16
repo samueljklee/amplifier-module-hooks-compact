@@ -176,6 +176,84 @@ class TestFilterRegistry:
         assert result[0] == "git-diff"
 
 
+class TestCompoundCommandPassthrough:
+    """Compound commands (containing && after cd-stripping) must passthrough.
+
+    When the model chains multiple commands with &&, the hook should NOT apply
+    a filter to the combined output. Doing so strips output from the later
+    commands, causing the model to retry — which adds extra tool calls.
+
+    Examples that should NOT be compressed:
+      - git status && git log --oneline -10 && git diff
+      - cd /path && git status && git diff   (cd stripped, still has &&)
+      - pytest test_a.py && pytest test_b.py
+    """
+
+    def _make_hook(self):
+        from amplifier_module_hooks_compact.hook import CompactHook
+
+        return CompactHook({"enabled": True, "min_lines": 5})
+
+    def test_compound_git_status_and_log_returns_none(self):
+        """git status && git log --oneline -10 must not be compressed."""
+        hook = self._make_hook()
+        result = hook._registry.classify(
+            "git status && git log --oneline -10 && git diff"
+        )
+        assert result is None, (
+            "compound git command should not match — would strip git log output"
+        )
+
+    def test_compound_git_with_echo_separator_returns_none(self):
+        """Compound command with echo separators must not be compressed."""
+        hook = self._make_hook()
+        result = hook._registry.classify(
+            'git status && echo "---" && git log --oneline -10 && echo "---" && git diff'
+        )
+        assert result is None
+
+    def test_compound_after_cd_strip_returns_none(self):
+        """cd /path && git status && git diff: after cd strip still has &&, must be None."""
+        hook = self._make_hook()
+        result = hook._registry.classify(
+            "cd /Users/samule/repo && git status && git diff"
+        )
+        assert result is None
+
+    def test_single_git_status_after_cd_still_matches(self):
+        """cd /path && git status (no extra &&): must still be compressed."""
+        hook = self._make_hook()
+        result = hook._registry.classify(
+            "cd /Users/samule/repo/amplifier-module-hooks-compact && git status"
+        )
+        assert result is not None
+        assert result[0] == "git-status"
+
+    def test_single_pytest_after_cd_still_matches(self):
+        """cd /path && uv run pytest: must still be compressed."""
+        hook = self._make_hook()
+        result = hook._registry.classify(
+            "cd /Users/samule/repo/amplifier-module-hooks-compact && uv run pytest -q"
+        )
+        assert result is not None
+        assert result[0] == "pytest"
+
+    def test_piped_pytest_still_matches(self):
+        """pytest ... | tail -50 uses pipe not &&, must still match pytest filter."""
+        hook = self._make_hook()
+        result = hook._registry.classify(
+            "cd /Users/samule/repo && uv run pytest 2>&1 | tail -50"
+        )
+        assert result is not None
+        assert result[0] == "pytest"
+
+    def test_semicolon_compound_returns_none(self):
+        """git status ; git log: semicolon compound should not be compressed."""
+        hook = self._make_hook()
+        result = hook._registry.classify("git status ; git log --oneline -10")
+        assert result is None
+
+
 class TestPytestPatternCoverage:
     """Verify the pytest pattern in CompactHook covers common invocations."""
 

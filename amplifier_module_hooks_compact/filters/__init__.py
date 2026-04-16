@@ -157,6 +157,13 @@ class FilterRegistry:
         - **Tool runners**: ``uvx``, ``uv run``, ``npx``, ``poetry run``,
           ``python -m``, ``bunx``, ``pnpm exec``, ``yarn dlx``.
 
+        Compound commands (containing ``&&`` or `` ; `` after stripping) are
+        **not compressed**.  Applying a single-command filter to the combined
+        output of e.g. ``git status && git log && git diff`` strips the log and
+        diff output, leaving the model with only the status summary and causing
+        it to retry the missing commands — adding extra tool calls rather than
+        saving them.
+
         Args:
             command: The bash command string to classify.
 
@@ -169,6 +176,16 @@ class FilterRegistry:
         # anchored patterns (^git, ^cargo, …) are not defeated by the directory
         # change that Amplifier's bash tool prepends.
         matchable = _strip_shell_prefix(command)
+
+        # Guard: if the command is a genuine compound command after stripping
+        # shell prefixes, skip all filters and return passthrough.  Applying a
+        # single-command filter to combined multi-command output would silently
+        # strip the output of the later commands, causing the model to retry.
+        # Examples that would be incorrectly filtered without this guard:
+        #   "git status && git log --oneline -10 && git diff"
+        #   "cd /repo && git status && git diff"  (after cd-strip: "git status && git diff")
+        if "&&" in matchable or " ; " in matchable:
+            return None
 
         # Priority 1: User YAML filters (project-local or user-global)
         for name, pattern, config in self._user_yaml_filters:
