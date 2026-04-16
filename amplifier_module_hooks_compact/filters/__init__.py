@@ -18,6 +18,30 @@ from typing import Any, Callable
 PythonFilter = Callable[[str, str, "int | None"], str]
 
 
+# Matches one or more leading "cd /some/path &&" or "cd /some/path;" segments
+# so classify() can strip them before pattern matching.
+# Examples that are stripped:
+#   "cd /foo &&"      "cd /foo;"     "cd /a && cd /b &&"
+_CD_PREFIX_RE = re.compile(r"^(?:cd\s+\S+\s*(?:&&|;)\s*)+")
+
+
+def _strip_shell_prefix(command: str) -> str:
+    """Strip leading cd-directory-change segments from a shell command string.
+
+    Amplifier's bash tool frequently prepends ``cd /path &&`` before the
+    real command.  Stripping those prefixes lets filter patterns that are
+    anchored with ``^`` (e.g. ``^git\\s+status``) match correctly.
+
+    Args:
+        command: The raw bash command string, possibly containing ``cd`` prefixes.
+
+    Returns:
+        The command with any leading ``cd /path &&`` / ``cd /path;`` segments
+        removed.  Returns the original string unchanged when no prefix is found.
+    """
+    return _CD_PREFIX_RE.sub("", command)
+
+
 class FilterRegistry:
     """Registry of command-to-filter mappings.
 
@@ -81,6 +105,11 @@ class FilterRegistry:
         Checks priority buckets in order: user YAML → Python → built-in YAML.
         First match wins.
 
+        Strips leading ``cd /path &&`` / ``cd /path;`` shell prefixes before
+        matching so that patterns anchored with ``^`` (e.g. ``^git\\s+status``)
+        work correctly even when Amplifier's bash tool prepends a directory
+        change to the command string.
+
         Args:
             command: The bash command string to classify.
 
@@ -89,19 +118,24 @@ class FilterRegistry:
             If filter_fn_or_config is callable, it's a Python filter.
             If it's a dict, it's a YAML filter config.
         """
+        # Strip "cd /path &&" / "cd /path;" prefixes before matching so that
+        # anchored patterns (^git, ^cargo, …) are not defeated by the directory
+        # change that Amplifier's bash tool prepends.
+        matchable = _strip_shell_prefix(command)
+
         # Priority 1: User YAML filters (project-local or user-global)
         for name, pattern, config in self._user_yaml_filters:
-            if pattern.search(command):
+            if pattern.search(matchable):
                 return (name, config)
 
         # Priority 2: Built-in Python filters
         for name, pattern, filter_fn in self._python_filters:
-            if pattern.search(command):
+            if pattern.search(matchable):
                 return (name, filter_fn)
 
         # Priority 3: Built-in YAML filters
         for name, pattern, config in self._yaml_filters:
-            if pattern.search(command):
+            if pattern.search(matchable):
                 return (name, config)
 
         return None

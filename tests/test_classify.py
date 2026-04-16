@@ -132,3 +132,45 @@ class TestFilterRegistry:
         registry.register_yaml("no-pattern", {"max_lines": 10, "on_empty": "ok"})
 
         assert registry.classify("anything") is None
+
+    # ------------------------------------------------------------------
+    # cd-prefix stripping (Amplifier bash tool prepends "cd /path &&")
+    # ------------------------------------------------------------------
+
+    def test_cd_prefix_and_ampersand_matches_git_status(self):
+        """cd /path && git status should match git-status filter."""
+        registry = FilterRegistry()
+        registry.register_python("git-status", r"^git\s+status\b", lambda o, c, e: o)
+
+        result = registry.classify(
+            "cd /Users/samule/repo/teamkb-workspace && git status"
+        )
+        assert result is not None
+        assert result[0] == "git-status"
+
+    def test_cd_prefix_and_ampersand_matches_cargo_test(self):
+        """cd /path && cargo test should match cargo-test filter."""
+        registry = FilterRegistry()
+        registry.register_python("cargo-test", r"^cargo\s+test\b", lambda o, c, e: o)
+
+        result = registry.classify("cd /Users/samule/repo && cargo test")
+        assert result is not None
+        assert result[0] == "cargo-test"
+
+    def test_cd_prefix_semicolon_matches_git_status(self):
+        """cd /path; git status should match git-status filter."""
+        registry = FilterRegistry()
+        registry.register_python("git-status", r"^git\s+status\b", lambda o, c, e: o)
+
+        result = registry.classify("cd /some/path; git status")
+        assert result is not None
+        assert result[0] == "git-status"
+
+    def test_chained_cd_prefix_matches_git_diff(self):
+        """cd /a && cd /b && git diff should match git-diff filter."""
+        registry = FilterRegistry()
+        registry.register_python("git-diff", r"^git\s+diff\b", lambda o, c, e: o)
+
+        result = registry.classify("cd /a && cd /b && git diff")
+        assert result is not None
+        assert result[0] == "git-diff"
