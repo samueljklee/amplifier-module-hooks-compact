@@ -1,0 +1,206 @@
+# DTU Profile: Amplifier environment WITH hooks-compact active
+#
+# Used for the "A" side of A/B testing.
+# hooks-compact is installed via bundle.app so it mounts automatically.
+#
+# Variables (pass at launch via --var):
+#   ANTHROPIC_API_KEY -- forwarded to the Amplifier provider inside the container
+name: hooks-compact-with
+description: >
+  Amplifier CLI environment with hooks-compact behavior active.
+  Used for A-side of A/B testing to validate compression behaviour.
+base:
+  image: ubuntu:24.04
+
+passthrough:
+  allow_external: true
+  services:
+    - name: anthropic
+      key_env: ANTHROPIC_API_KEY
+
+provision:
+  setup_cmds:
+    # System deps
+    - apt-get update && apt-get install -y git curl python3 python3-pip cargo nodejs npm
+
+    # Install uv
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Install Amplifier
+    - |
+      export PATH="/root/.local/bin:$PATH"
+      uv tool install git+https://github.com/microsoft/amplifier
+
+    # Configure Amplifier provider + enable hooks-compact in bundle.app
+    - |
+      mkdir -p /root/.amplifier
+      cat > /root/.amplifier/settings.yaml << 'YAMLEOF'
+      config:
+        providers:
+          - module: provider-anthropic
+            source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
+            config:
+              api_key: $ANTHROPIC_API_KEY
+      bundle:
+        added:
+          behavior-compact: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main#subdirectory=behaviors/compact.yaml
+        app:
+          - git+https://github.com/samueljklee/amplifier-module-hooks-compact@main#subdirectory=behaviors/compact.yaml
+      YAMLEOF
+
+    # Clone hooks-compact repo for use in test scenarios
+    - git clone https://github.com/samueljklee/amplifier-module-hooks-compact /root/hooks-compact
+    - cd /root/hooks-compact && pip install uv && uv sync
+
+    # Create test fixtures
+    - |
+      cat > /tmp/test_eval_fail.py << 'PYEOF'
+      def test_addition_passes():
+          assert 1 + 1 == 2
+
+      def test_string_passes():
+          assert "hello".upper() == "HELLO"
+
+      def test_multiplication_fails():
+          result = 6 * 7
+          assert result == 99, f"Expected 99 but got {result}"
+
+      def test_division_fails():
+          result = 10 / 2
+          assert result == 7, f"Expected 7 but got {result}"
+
+      def test_boolean_fails():
+          items = [1, 2, 3]
+          assert len(items) == 10, f"Expected 10 items but got {len(items)}"
+      PYEOF
+
+    - |
+      cat > /tmp/lint_issues.py << 'PYEOF'
+      import os
+      import sys
+      import json
+      import pathlib
+
+      x = 1
+      y = 2
+      unused_var = "never read"
+
+      def calculate(a, b):
+          result = a + b
+          unused_result = a * b
+          return result
+
+      if x == True:
+          print("x is true")
+
+      if y == False:
+          print("y is false")
+      PYEOF
+
+    # Set up Rust project for cargo test/build/clippy
+    - |
+      mkdir -p /tmp/test-rust-project/src
+      cat > /tmp/test-rust-project/Cargo.toml << 'TOML'
+      [package]
+      name = "test-project"
+      version = "0.1.0"
+      edition = "2021"
+      TOML
+      cat > /tmp/test-rust-project/src/lib.rs << 'RUST'
+      pub fn add(a: i32, b: i32) -> i32 {
+          a + b
+      }
+
+      pub fn multiply(a: i32, b: i32) -> i32 {
+          a * b
+      }
+
+      #[cfg(test)]
+      mod tests {
+          use super::*;
+
+          #[test]
+          fn test_add() {
+              assert_eq!(add(2, 3), 5);
+          }
+
+          #[test]
+          fn test_multiply() {
+              assert_eq!(multiply(3, 4), 12);
+          }
+
+          #[test]
+          fn test_add_negative() {
+              assert_eq!(add(-1, 1), 0);
+          }
+
+          #[test]
+          fn test_large_numbers() {
+              assert_eq!(add(100, 200), 300);
+          }
+      }
+      RUST
+
+    # Set up Node project for npm test
+    - |
+      mkdir -p /tmp/test-node-project
+      cat > /tmp/test-node-project/package.json << 'JSON'
+      {
+        "name": "test-node-project",
+        "version": "1.0.0",
+        "scripts": {
+          "test": "mocha test.js",
+          "build": "echo 'Build complete. Bundle: dist/app.js (42KB)'"
+        },
+        "devDependencies": {
+          "mocha": "^10.0.0"
+        }
+      }
+      JSON
+      cat > /tmp/test-node-project/test.js << 'JS'
+      const assert = require('assert');
+
+      describe('Math operations', function() {
+        it('should add two numbers correctly', function() {
+          assert.equal(2 + 3, 5);
+        });
+
+        it('should multiply correctly', function() {
+          assert.equal(4 * 5, 20);
+        });
+
+        it('should handle strings', function() {
+          assert.equal('hello' + ' world', 'hello world');
+        });
+
+        it('should compare arrays by length', function() {
+          const arr = [1, 2, 3];
+          assert.equal(arr.length, 3);
+        });
+      });
+      JS
+      cd /tmp/test-node-project && npm install
+
+    # Create a small Makefile project
+    - |
+      mkdir -p /tmp/test-make-project
+      cat > /tmp/test-make-project/Makefile << 'MAKE'
+      .PHONY: all build test clean
+
+      all: build test
+
+      build:
+      	@echo "Compiling src/main.c..."
+      	@echo "Linking..."
+      	@echo "Build complete: bin/app"
+
+      test:
+      	@echo "Running unit tests..."
+      	@echo "test_add: PASS"
+      	@echo "test_multiply: PASS"
+      	@echo "All 2 tests passed."
+
+      clean:
+      	@echo "Removing build artifacts..."
+      	@echo "Clean complete."
+      MAKE

@@ -492,11 +492,26 @@ function greet(user: User): string {
 const result: number = greet({name: "Alice", age: 30});  // wrong type
 """)
     output, code = run_cmd("npx tsc --noEmit", cwd=ts_dir)
-    if not output.strip():
-        # tsc might output nothing if not installed, use fixture
+    # Use fixture if tsc isn't installed or the wrong tsc ran (npx intercept warning)
+    tsc_not_real = (
+        not output.strip()
+        or "not the tsc command" in output
+        or "not found" in output.lower()
+        or code == 0 and not output.strip()
+    )
+    if tsc_not_real:
+        # Realistic tsc output with 2 type errors
         output = """\
 app.ts(8,30): error TS2551: Property 'namee' does not exist on type 'User'. Did you mean 'name'?
+  Object literal may only specify known properties, and 'namee' does not exist in type 'User'.
 app.ts(11,16): error TS2322: Type 'string' is not assignable to type 'number'.
+  Type 'string' is not assignable to type 'number'.
+
+Found 2 errors in 2 files.
+
+Errors  Files
+     1  app.ts:8
+     1  app.ts:11
 """
         code = 1
     results.append(

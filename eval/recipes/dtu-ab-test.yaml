@@ -1,0 +1,206 @@
+name: hooks-compact DTU A/B Regression Test
+description: >
+  Runs A/B regression testing for hooks-compact in isolated DTU containers.
+
+  Container A — Amplifier with hooks-compact active (bundle.app).
+  Container B — Baseline Amplifier with no hooks-compact.
+
+  Both containers run the same prompts for each test case defined in
+  eval/test-cases.yaml. Session data is pulled from each container and
+  analyzed by eval/analyze_ab.py to produce a per-scenario results table
+  with compression metrics and PASS/FAIL verdicts.
+
+  The test criteria:
+    PASS — Session A (with hook) makes ≤1 more bash calls than Session B.
+    FAIL — Session A makes >1 more bash calls (model retrying due to compression).
+
+  Results are saved to eval/results/<timestamp>/
+
+context:
+  repo_dir: /Users/samule/repo/amplifier-module-hooks-compact
+  profile_with: eval/profiles/hooks-compact-with.yaml
+  profile_without: eval/profiles/hooks-compact-without.yaml
+  telemetry_db: ~/.amplifier/hooks-compact/telemetry.db
+
+steps:
+  - name: validate-dtu
+    description: Check DTU is available and profiles are valid
+    shell: |
+      which amplifier-digital-twin || (echo "ERROR: amplifier-digital-twin not found" && exit 1)
+      echo "✅ DTU available: $(which amplifier-digital-twin)"
+      echo "DTU environments:"
+      amplifier-digital-twin list
+
+  - name: setup-test-fixtures
+    description: Create test fixtures needed by test cases
+    shell: |
+      # pytest failure file
+      cat > /tmp/test_eval_fail.py << 'PYEOF'
+      def test_addition_passes():
+          assert 1 + 1 == 2
+
+      def test_string_passes():
+          assert "hello".upper() == "HELLO"
+
+      def test_multiplication_fails():
+          result = 6 * 7
+          assert result == 99, f"Expected 99 but got {result}"
+
+      def test_division_fails():
+          result = 10 / 2
+          assert result == 7, f"Expected 7 but got {result}"
+
+      def test_boolean_fails():
+          items = [1, 2, 3]
+          assert len(items) == 10, f"Expected 10 items but got {len(items)}"
+      PYEOF
+
+      # lint issues file
+      cat > /tmp/lint_issues.py << 'PYEOF'
+      import os
+      import sys
+      import json
+      import pathlib
+
+      x = 1
+      y = 2
+      unused_var = "never read"
+
+      def calculate(a, b):
+          result = a + b
+          unused_result = a * b
+          return result
+
+      if x == True:
+          print("x is true")
+
+      if y == False:
+          print("y is false")
+      PYEOF
+
+      # Rust project
+      mkdir -p /tmp/test-rust-project/src
+      cat > /tmp/test-rust-project/Cargo.toml << 'TOML'
+      [package]
+      name = "test-project"
+      version = "0.1.0"
+      edition = "2021"
+      TOML
+      cat > /tmp/test-rust-project/src/lib.rs << 'RUST'
+      pub fn add(a: i32, b: i32) -> i32 { a + b }
+      pub fn multiply(a: i32, b: i32) -> i32 { a * b }
+      #[cfg(test)]
+      mod tests {
+          use super::*;
+          #[test] fn test_add() { assert_eq!(add(2, 3), 5); }
+          #[test] fn test_multiply() { assert_eq!(multiply(3, 4), 12); }
+          #[test] fn test_add_negative() { assert_eq!(add(-1, 1), 0); }
+          #[test] fn test_large_numbers() { assert_eq!(add(100, 200), 300); }
+      }
+      RUST
+
+      # Node project
+      mkdir -p /tmp/test-node-project
+      cat > /tmp/test-node-project/package.json << 'JSON'
+      {"name":"test-node-project","version":"1.0.0","scripts":{"test":"mocha test.js","build":"echo 'Build complete. Bundle: dist/app.js (42KB)'"},"devDependencies":{"mocha":"^10.0.0"}}
+      JSON
+      cat > /tmp/test-node-project/test.js << 'JS'
+      const assert = require('assert');
+      describe('Math', function() {
+        it('should add', function() { assert.equal(2+3, 5); });
+        it('should multiply', function() { assert.equal(4*5, 20); });
+        it('should concat', function() { assert.equal('a'+'b', 'ab'); });
+        it('should check length', function() { assert.equal([1,2,3].length, 3); });
+      });
+      JS
+      cd /tmp/test-node-project && npm install --silent
+      echo "✅ Test fixtures created"
+
+  - name: launch-containers
+    description: Launch Container A (with hooks) and Container B (baseline)
+    shell: |
+      echo "🚀 Launching Container A (with hooks-compact)..."
+      DTU_A_JSON=$(amplifier-digital-twin launch \
+        {{context.repo_dir}}/eval/profiles/hooks-compact-with.yaml \
+        --name hooks-compact-eval-a)
+      DTU_A_ID=$(echo "$DTU_A_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+      echo "$DTU_A_ID" > /tmp/dtu-eval-container-a.txt
+      echo "  Container A: $DTU_A_ID"
+
+      echo "🚀 Launching Container B (baseline, no hooks)..."
+      DTU_B_JSON=$(amplifier-digital-twin launch \
+        {{context.repo_dir}}/eval/profiles/hooks-compact-without.yaml \
+        --name hooks-compact-eval-b)
+      DTU_B_ID=$(echo "$DTU_B_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+      echo "$DTU_B_ID" > /tmp/dtu-eval-container-b.txt
+      echo "  Container B: $DTU_B_ID"
+
+      echo ""
+      echo "✅ Both containers ready"
+      echo "   Container A (with): $DTU_A_ID"
+      echo "   Container B (base): $DTU_B_ID"
+
+  - name: run-test-cases
+    description: Run all test cases in both containers and collect results
+    shell: |
+      DTU_A_ID=$(cat /tmp/dtu-eval-container-a.txt)
+      DTU_B_ID=$(cat /tmp/dtu-eval-container-b.txt)
+      RESULTS_DIR="{{context.repo_dir}}/eval/results/$(date +%Y-%m-%d-%H-%M)-dtu"
+      mkdir -p "$RESULTS_DIR"
+
+      echo "Running test cases in both containers..."
+      echo "Results dir: $RESULTS_DIR"
+
+      # Run the DTU runner script
+      bash {{context.repo_dir}}/eval/dtu-run-eval.sh \
+        "$DTU_A_ID" \
+        "$DTU_B_ID" \
+        "$RESULTS_DIR" \
+        "{{context.telemetry_db}}"
+
+  - name: print-summary
+    description: Print aggregated results table
+    shell: |
+      RESULTS_DIR=$(ls -dt {{context.repo_dir}}/eval/results/*-dtu 2>/dev/null | head -1)
+      if [ -z "$RESULTS_DIR" ]; then
+        echo "No DTU results found"
+        exit 1
+      fi
+      echo ""
+      echo "━━━ hooks-compact DTU A/B Test Results ━━━"
+      echo ""
+      # Print table header
+      python3 -c "
+      from pathlib import Path
+      sep = '| ' + '-'*28 + ' | ' + '-'*9 + ' | ' + '-'*10 + ' | ' + '-'*8 + ' | ' + '-'*10 + ' | ' + '-'*14 + ' | ' + '-'*10 + ' | ' + '-'*14 + ' | ' + '-'*7 + ' |'
+      print(sep)
+      print('| {:<28} | {:>9} | {:>10} | {:>8} | {:>10} | {:>14} | {:>10} | {:>14} | {:>7} |'.format(
+          'Scenario', 'Input', 'Output', 'Savings', 'With Turns', 'Without Turns', 'With Calls', 'Without Calls', 'Verdict'))
+      print(sep)
+      "
+      # Print each scenario row
+      for row_file in "$RESULTS_DIR"/*_table_row.txt; do
+        [ -f "$row_file" ] && cat "$row_file"
+      done
+
+      echo ""
+      # Summary
+      PASS=$(grep -l "PASS" "$RESULTS_DIR"/*_verdict.txt 2>/dev/null | wc -l)
+      FAIL=$(grep -l "FAIL" "$RESULTS_DIR"/*_verdict.txt 2>/dev/null | wc -l)
+      echo "PASS: $PASS  FAIL: $FAIL"
+
+  - name: cleanup-containers
+    description: Destroy both DTU containers
+    shell: |
+      DTU_A_ID=$(cat /tmp/dtu-eval-container-a.txt 2>/dev/null || echo "")
+      DTU_B_ID=$(cat /tmp/dtu-eval-container-b.txt 2>/dev/null || echo "")
+      if [ -n "$DTU_A_ID" ]; then
+        echo "Destroying Container A: $DTU_A_ID"
+        amplifier-digital-twin destroy "$DTU_A_ID" || true
+      fi
+      if [ -n "$DTU_B_ID" ]; then
+        echo "Destroying Container B: $DTU_B_ID"
+        amplifier-digital-twin destroy "$DTU_B_ID" || true
+      fi
+      rm -f /tmp/dtu-eval-container-a.txt /tmp/dtu-eval-container-b.txt
+      echo "✅ Cleanup complete"
