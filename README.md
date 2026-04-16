@@ -4,7 +4,10 @@ An [Amplifier](https://github.com/microsoft/amplifier) hook module that compress
 
 **Why?** A typical AI coding session generates tens of thousands of tokens of raw bash output (`git status` boilerplate, test runner noise, compilation progress). With hooks-compact, the signal reaches the model and the noise doesn't.
 
-> **Measured in live sessions:** `git diff` 96.2% · `git status` 80.4% · `pytest -v` 99.9%
+> **Measured in live sessions:** `git diff` 96.2% · `git status` 80.4% · `pytest` (all pass) 99.9% · `pytest` (with failures) 39.1%<sup>†</sup> · `ruff check` 83.4%<sup>‡</sup>
+>
+> <sup>†</sup> Failure case: full error details preserved so the model has everything it needs to fix the issues.
+> <sup>‡</sup> All unique violation descriptions shown per rule code — model sees every unused import name, every unused variable.
 
 ---
 
@@ -73,26 +76,46 @@ hooks:
 ### Python Filters (complex, structured parsing)
 
 Numbers marked ✓ are measured from live Amplifier sessions (A/B tested, model performance
-verified). Others are computed from real command outputs in unit test fixtures.
+verified). All-pass and failure cases are measured separately.
 
-| Command Pattern | Strategy | Typical Savings |
-|----------------|----------|----------------|
-| `git status` | Extract branch + file groups, strip hints, truncate large lists | **80%** ✓ |
-| `git diff` | Diffstat + first 8 changed lines per file (≤5 files) | **96%** ✓ |
-| `git log` | One-line-per-commit format | 0–80%<sup>†</sup> |
-| `git push/pull/add/commit` | `"ok"` on success, errors on failure | ~92% |
-| `cargo test` | `"✓ N passed (Xs)"` on all-pass; failures only on partial | ~99% |
-| `pytest` | Same asymmetric behavior as cargo test | **99.9%** ✓ |
-| `npm test` (jest/vitest/mocha) | Detected automatically, same pattern | ~85–99% |
-| `cargo build` | `"ok"` on success; errors + warnings on failure | ~90% |
-| `tsc` | Error-only, strip success noise | ~85% |
-| `npm run build` | Success short-circuit | ~80% |
-| `cargo clippy` | Group-by-rule, deduplicate, count occurrences | ~80% |
-| `ruff check` | Group-by-rule; handles both concise and new full/rich format | **93%** |
-| `eslint` | Same group-by-rule pattern | ~75% |
+| Command Pattern | Strategy | All-pass | With failures |
+|----------------|----------|----------|---------------|
+| `git status` | Extract branch + file groups, strip hints, truncate large lists | **80%** ✓ | — |
+| `git diff` | Diffstat + first 8 changed lines per file (≤5 files) | **96%** ✓ | **96%** ✓ |
+| `git log` | One-line-per-commit format | 0–80%<sup>†</sup> | — |
+| `git push/pull/add/commit` | `"ok"` on success, errors on failure | ~92% | — |
+| `cargo test` | `"✓ N passed (Xs)"` on all-pass; failures only on partial | ~99% | ~60–80% |
+| `pytest` | Same asymmetric behavior as cargo test | **99.9%** ✓ | **39%** ✓<sup>‡</sup> |
+| `npm test` (jest/vitest/mocha) | Detected automatically, same pattern | ~85–99% | ~50–80% |
+| `cargo build` | `"ok"` on success; errors + warnings on failure | ~90% | — |
+| `tsc` | Error-only, strip success noise | ~85% | — |
+| `npm run build` | Success short-circuit | ~80% | — |
+| `cargo clippy` | Group-by-rule, deduplicate, count occurrences | — | ~80% |
+| `ruff check` | Group-by-rule; all unique descriptions per rule code | — | **83%** ✓<sup>§</sup> |
+| `eslint` | Same group-by-rule pattern | — | ~75% |
 
-<sup>†</sup> `git log --oneline` is already compact — savings are minimal by design (the model
-already gets a clean one-liner per commit). Verbose `git log` format saves ~80%.
+<sup>†</sup> `git log --oneline` is already compact — savings are minimal by design.
+
+<sup>‡</sup> Failure case: full traceback + assertion messages preserved per failing test. Model
+has everything needed to fix the issues. Savings are lower because error details are kept.
+
+<sup>§</sup> Failure case: every unique violation description is shown per rule code. For example,
+`F401 (9×): \`os\` imported but unused | \`sys\` imported but unused | ...` so the model sees
+every specific import name, not just "9 F401 violations". Single-occurrence violations include
+`file:line` location.
+
+**Tool runner prefixes** are automatically stripped before matching, so all patterns work
+whether the model uses the tool directly or via a package runner:
+
+| Works natively | After prefix stripping |
+|---------------|----------------------|
+| `uvx ruff check` | → `ruff check` |
+| `uv run pytest -v` | → `pytest -v` |
+| `npx eslint src/` | → `eslint src/` |
+| `bunx vitest run` | → `vitest run` |
+| `poetry run pytest` | → `pytest` |
+| `python -m pytest` | → `pytest` |
+| `cd /path && uvx ruff` | → `ruff ...` |
 
 ### YAML Filters (declarative, regex pipelines)
 
