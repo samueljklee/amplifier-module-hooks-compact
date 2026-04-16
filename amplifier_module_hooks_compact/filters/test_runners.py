@@ -242,15 +242,54 @@ def filter_npm_test(output: str, command: str, exit_code: int | None) -> str:
                 dur = f" ({duration.group(1)})" if duration else ""
                 return f"✓ {passed.group(1)} passed{dur}"
 
-    # Mocha: look for "N passing" / "N failing"
+
+    # Mocha: collect ALL passing/failing counts before deciding.
+    # Must scan all lines first — returning on first "N passing" match
+    # would miss a subsequent "M failing" line (producing false green for failing runs).
+    mocha_passing: str | None = None
+    mocha_failing: str | None = None
     for line in lines:
         m = re.match(r"\s+(\d+) (passing|failing)", line)
         if m:
-            n, result = m.group(1), m.group(2)
-            if result == "passing":
-                return f"✓ {n} passing"
-            else:
-                return f"✗ {n} failing"
+            n_str, result_str = m.group(1), m.group(2)
+            if result_str == "passing":
+                mocha_passing = n_str
+            elif result_str == "failing":
+                mocha_failing = n_str
+
+    if mocha_passing is not None or mocha_failing is not None:
+        if mocha_failing and int(mocha_failing) > 0:
+            # Extract numbered failure blocks: "  N) suite / test name:"
+            fail_blocks: list[str] = []
+            in_failure_block = False
+            current_block: list[str] = []
+            _MAX_MOCHA_BLOCK = 15  # max lines per failure block
+
+            for line in lines:
+                if re.match(r"\s+\d+\) ", line):
+                    # Start a new numbered failure block
+                    if current_block:
+                        fail_blocks.append("\n".join(current_block))
+                    current_block = [line]
+                    in_failure_block = True
+                elif in_failure_block:
+                    # Stop at passing/failing summary lines
+                    if re.match(r"\s+\d+ (passing|failing)", line):
+                        if current_block:
+                            fail_blocks.append("\n".join(current_block))
+                        current_block = []
+                        in_failure_block = False
+                    elif len(current_block) < _MAX_MOCHA_BLOCK:
+                        current_block.append(line)
+            if current_block:
+                fail_blocks.append("\n".join(current_block))
+
+            summary = f"\u2717 {mocha_failing} failing, {mocha_passing or 0} passing"
+            if fail_blocks:
+                return (summary + "\n\n" + "\n\n".join(fail_blocks[:5])).strip()
+            return summary
+        elif mocha_passing:
+            return f"\u2713 {mocha_passing} passing"
 
     # Fallback: return last few lines
     non_empty = [ln for ln in lines if ln.strip()]

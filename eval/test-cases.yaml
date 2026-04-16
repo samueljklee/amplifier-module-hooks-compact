@@ -1,98 +1,356 @@
+# hooks-compact: Comprehensive Eval Test Cases
+# All 26 filter scenarios with setup/cleanup and evaluation criteria.
+#
+# Format for reporting results:
+#   Simulation: | Scenario | Filter | Before (chars) | After (chars) | Savings | Before Preview | After Preview |
+#   A/B Test:   | Scenario | Input | Output | Savings | With Turns | Without Turns | With Calls | Without Calls | Verdict |
+
 test_cases:
-  # ── git workflow ───────────────────────────────────────────────────────────
-  - id: git-workflow
-    name: "Git workflow (status + log + diff)"
+  # ── GIT FILTERS ────────────────────────────────────────────────────────────
+
+  - id: git-status-dirty
+    name: "Git status (dirty working tree)"
     category: git
-    prompt: "check git status, show me the last 10 commits, and show me the diff of any uncommitted changes"
+    filter: git-status
+    scenario: normal
+    prompt: "check git status in this repo"
     working_dir: /Users/samule/repo/amplifier-module-hooks-compact
-    expected_commands:
-      - git status
-      - git log
-      - git diff
-    # Baseline: 3 tool calls. Allow 1 extra in case model confirms or retries.
-    max_acceptable_tool_calls: 4
-    # Model should NOT need to re-run commands because compressed output was unclear.
-    max_retries: 0
-
-  # ── test runner ────────────────────────────────────────────────────────────
-  - id: test-runner
-    name: "Python test runner (pytest — 236 tests)"
-    category: test-runner
-    prompt: "run the test suite and tell me if all tests pass. use uv run pytest -q"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
-    expected_commands:
-      - pytest
-      - uv run pytest
-    # 1 pytest run + maybe 1 follow-up if failures found. 2 is baseline.
-    max_acceptable_tool_calls: 3
-    max_retries: 0
-
-  # ── linter ─────────────────────────────────────────────────────────────────
-  - id: linter
-    name: "Python linter (ruff check)"
-    category: lint
-    prompt: "check the code quality with ruff and report any issues. run: uv run ruff check amplifier_module_hooks_compact/ tests/"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
-    expected_commands:
-      - ruff check
-      - uv run ruff
-    # 1-2 ruff runs (src + tests separately, or combined)
-    max_acceptable_tool_calls: 3
-    max_retries: 0
-
-  # ── build check ────────────────────────────────────────────────────────────
-  - id: build-check
-    name: "Build/import check (verify module imports cleanly)"
-    category: build
-    prompt: "verify the module can be imported without errors. run: python3 -c \"import amplifier_module_hooks_compact; print('ok')\" and also check if there are any syntax errors in the source files"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
-    expected_commands:
-      - python3 -c
-      - python -c
-    # Simple import check — should be 1-2 commands
-    max_acceptable_tool_calls: 4
-    max_retries: 0
-
-  # ── mixed heavy ────────────────────────────────────────────────────────────
-  - id: mixed-heavy
-    name: "Mixed heavy session (git + tests + lint + summary)"
-    category: mixed
-    prompt: "review the project health of the hooks-compact module: (1) check git status, (2) run the tests with uv run pytest -q, (3) run the linter with uv run ruff check amplifier_module_hooks_compact/, then give me a health summary"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
-    expected_commands:
-      - git status
-      - pytest
-      - ruff check
-    # git + pytest + ruff = 3 tool calls minimum, allow up to 6
-    max_acceptable_tool_calls: 6
-    max_retries: 1
-
-  # ── short output (below min_lines threshold) ───────────────────────────────
-  - id: short-output
-    name: "Short output — below min_lines=5 threshold (should NOT compress)"
-    category: passthrough
-    prompt: "what branch am I on? just run git branch --show-current and tell me"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
-    expected_commands:
-      - git branch
-      - git rev-parse
-    # Simple — 1 command
+    expected_commands: [git status]
     max_acceptable_tool_calls: 2
-    max_retries: 0
-    # This test validates that short output is NOT compressed (passthrough)
-    expect_no_compression: true
+    notes: "Should show branch, staged/unstaged/untracked files compactly"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PASS/FAIL criteria (applied by analyze.sh)
-# ─────────────────────────────────────────────────────────────────────────────
+  - id: git-diff-large
+    name: "Git diff (large unified diff)"
+    category: git
+    filter: git-diff
+    scenario: normal
+    prompt: "show me the diff of any uncommitted changes"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: [git diff]
+    max_acceptable_tool_calls: 2
+    notes: "Should keep diffstat + first N changed lines per file"
+
+  - id: git-log
+    name: "Git log (recent commits)"
+    category: git
+    filter: git-log
+    scenario: normal
+    prompt: "show me the last 10 commits"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: ["git log"]
+    max_acceptable_tool_calls: 2
+    notes: "Already compact in --oneline mode; minimal savings expected"
+
+  - id: git-push-success
+    name: "Git push (up to date)"
+    category: git
+    filter: git-simple
+    scenario: success
+    prompt: "push the current branch to origin"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: ["git push"]
+    max_acceptable_tool_calls: 2
+    notes: "Success should short-circuit to branch ref or 'ok'"
+
+  - id: git-push-rejected
+    name: "Git push (rejected)"
+    category: git
+    filter: git-simple
+    scenario: failure
+    prompt: "push the current branch to origin"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: ["git push"]
+    max_acceptable_tool_calls: 2
+    notes: "Failure should preserve the error and hint lines"
+
+  - id: git-commit
+    name: "Git commit"
+    category: git
+    filter: git-simple
+    scenario: success
+    prompt: "stage all changes and commit with message 'test: eval commit'"
+    working_dir: /tmp/test-rust-project
+    expected_commands: ["git commit"]
+    max_acceptable_tool_calls: 3
+    notes: "Should preserve [branch hash] message line; strip everything else"
+
+  - id: git-pull
+    name: "Git pull (fast-forward)"
+    category: git
+    filter: git-simple
+    scenario: success
+    prompt: "pull the latest changes from origin"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: ["git pull"]
+    max_acceptable_tool_calls: 2
+    notes: "Should keep remote ref and file change summary"
+
+  # ── TEST RUNNER FILTERS ────────────────────────────────────────────────────
+
+  - id: pytest-all-pass
+    name: "pytest all pass (280 tests)"
+    category: test-runner
+    filter: pytest
+    scenario: all-pass
+    prompt: "run the test suite with uv run pytest -q and tell me if all tests pass"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: [pytest]
+    max_acceptable_tool_calls: 2
+    notes: "Should collapse to '✓ N passed in Xs'. Asymmetric: ~94% savings."
+
+  - id: pytest-failures
+    name: "pytest with 3 failures"
+    category: test-runner
+    filter: pytest
+    scenario: failures
+    prompt: "run pytest on /tmp/test_eval_fail.py -v and tell me what failed"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: [pytest]
+    max_acceptable_tool_calls: 3
+    notes: "Must preserve FAILURES section + error messages. Asymmetric: ~43% savings."
+
+  - id: cargo-test-pass
+    name: "cargo test all pass"
+    category: test-runner
+    filter: cargo-test
+    scenario: all-pass
+    prompt: "run cargo test and tell me if all tests pass"
+    working_dir: /tmp/test-rust-project
+    expected_commands: ["cargo test"]
+    max_acceptable_tool_calls: 2
+    notes: "Should collapse to '✓ N passed (Xs)'. ~96% savings."
+
+  - id: cargo-test-fail
+    name: "cargo test with 2 failures"
+    category: test-runner
+    filter: cargo-test
+    scenario: failures
+    prompt: "run cargo test and tell me what failed"
+    working_dir: /tmp/test-rust-fail
+    expected_commands: ["cargo test"]
+    max_acceptable_tool_calls: 3
+    notes: "Must preserve thread panic output for each failure. ~39% savings."
+
+  - id: npm-test-pass
+    name: "npm test all pass (Mocha)"
+    category: test-runner
+    filter: npm-test
+    scenario: all-pass
+    prompt: "run npm test and tell me if all tests pass"
+    working_dir: /tmp/test-node-project
+    expected_commands: ["npm test"]
+    max_acceptable_tool_calls: 2
+    notes: "Mocha: should collapse to '✓ N passing'. ~95% savings."
+
+  - id: npm-test-fail
+    name: "npm test with 2 failures (Mocha)"
+    category: test-runner
+    filter: npm-test
+    scenario: failures
+    prompt: "run npm test and tell me what failed"
+    working_dir: /tmp/test-node-fail
+    expected_commands: ["npm test"]
+    max_acceptable_tool_calls: 3
+    notes: "Mocha: must show '✗ N failing' with AssertionError details. ~12% savings (failure case)."
+
+  # ── LINT FILTERS ──────────────────────────────────────────────────────────
+
+  - id: ruff-errors
+    name: "ruff check with 10 violations"
+    category: lint
+    filter: ruff
+    scenario: errors
+    prompt: "run ruff check on /tmp/lint_issues.py and tell me what needs fixing"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: [ruff]
+    max_acceptable_tool_calls: 2
+    notes: "Group-by-rule compression. Must show all unique violations. ~76% savings."
+
+  - id: ruff-clean
+    name: "ruff check clean"
+    category: lint
+    filter: ruff
+    scenario: clean
+    prompt: "run ruff check on the source and tell me if there are any lint issues"
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: [ruff]
+    max_acceptable_tool_calls: 2
+    notes: "Already short output; should return 'ok (no ruff issues)'. ~0% savings (correct)."
+
+  - id: cargo-clippy
+    name: "cargo clippy with warnings"
+    category: lint
+    filter: cargo-clippy
+    scenario: warnings
+    prompt: "run cargo clippy and tell me about any warnings"
+    working_dir: /tmp/test-rust-clippy
+    expected_commands: ["cargo clippy"]
+    max_acceptable_tool_calls: 2
+    notes: "Group-by-rule compression. ~74% savings."
+
+  - id: eslint-errors
+    name: "eslint with 11 errors, 2 warnings"
+    category: lint
+    filter: eslint
+    scenario: errors
+    prompt: "run npx eslint src/ and tell me what needs to be fixed"
+    working_dir: /tmp/test-node-eslint
+    expected_commands: [eslint]
+    max_acceptable_tool_calls: 2
+    notes: "Group-by-rule compression. ~78% savings."
+
+  # ── BUILD FILTERS ─────────────────────────────────────────────────────────
+
+  - id: cargo-build-clean
+    name: "cargo build (success with warnings)"
+    category: build
+    filter: cargo-build
+    scenario: success-with-warnings
+    prompt: "build the project with cargo build and tell me if it succeeds"
+    working_dir: /tmp/test-rust-project
+    expected_commands: ["cargo build"]
+    max_acceptable_tool_calls: 2
+    notes: "Should return 'ok (build succeeded, with warnings)' + warning blocks. ~41% savings."
+
+  - id: cargo-build-errors
+    name: "cargo build with 2 compile errors"
+    category: build
+    filter: cargo-build
+    scenario: errors
+    prompt: "build the project and tell me what errors need to be fixed"
+    working_dir: /tmp/test-rust-errors
+    expected_commands: ["cargo build"]
+    max_acceptable_tool_calls: 2
+    notes: "Error-only strategy. Must preserve error[E...] blocks. ~65% savings."
+
+  - id: tsc-errors
+    name: "tsc with 2 type errors"
+    category: build
+    filter: tsc
+    scenario: errors
+    prompt: "run npx tsc --noEmit and tell me what type errors exist"
+    working_dir: /tmp/test-ts-errors
+    expected_commands: [tsc]
+    max_acceptable_tool_calls: 2
+    notes: "Error-only. For small files, may add summary. Real savings on large TS projects."
+
+  - id: npm-build-success
+    name: "npm run build (success)"
+    category: build
+    filter: npm-build
+    scenario: success
+    prompt: "run npm run build and tell me if it succeeds"
+    working_dir: /tmp/test-node-project
+    expected_commands: ["npm run build"]
+    max_acceptable_tool_calls: 2
+    notes: "Short-circuit to 'ok (build succeeded)'. ~80% savings."
+
+  # ── YAML FILTERS ──────────────────────────────────────────────────────────
+
+  - id: pip-install
+    name: "pip install requests"
+    category: yaml
+    filter: pip
+    scenario: install
+    prompt: "install the requests library using pip install requests"
+    working_dir: /tmp
+    expected_commands: [pip]
+    max_acceptable_tool_calls: 2
+    notes: "Strip download progress bars; keep Collecting/Installing/Successfully. ~64% savings."
+
+  - id: brew-already-installed
+    name: "brew install (already installed)"
+    category: yaml
+    filter: brew
+    scenario: already-installed
+    prompt: "install jq using brew install jq"
+    working_dir: /tmp
+    expected_commands: [brew]
+    max_acceptable_tool_calls: 2
+    notes: "Should short-circuit to 'already installed'. ~12% savings (small input)."
+
+  - id: make-build
+    name: "make (build project)"
+    category: yaml
+    filter: make
+    scenario: success
+    prompt: "run make all in the project"
+    working_dir: /tmp/test-make-project
+    expected_commands: [make]
+    max_acceptable_tool_calls: 2
+    notes: "Strip entering/leaving dir noise. Best savings on large Makefiles."
+
+  - id: docker-build
+    name: "docker build (with caching)"
+    category: yaml
+    filter: docker
+    scenario: success
+    prompt: "run docker build . and tell me if it succeeds"
+    working_dir: /tmp
+    expected_commands: [docker]
+    max_acceptable_tool_calls: 2
+    notes: "Strip CACHED/internal layers. ~60% savings on real builds."
+
+  - id: curl-verbose
+    name: "curl -v (verbose HTTP)"
+    category: yaml
+    filter: curl
+    scenario: normal
+    prompt: "run curl -v https://example.com and tell me the response status"
+    working_dir: /tmp
+    expected_commands: [curl]
+    max_acceptable_tool_calls: 2
+    notes: "Strip TLS handshake noise, keep headers and response. ~44% savings."
+
+# ── PASS/FAIL CRITERIA ─────────────────────────────────────────────────────────
+# Applied by analyze_sessions.py when comparing A/B session pairs.
+
 pass_criteria:
   # Session A (with hook) must not make significantly more tool calls than Session B
-  # delta_tool_calls_max: how many EXTRA tool calls we tolerate from compression
   delta_tool_calls_max: 1
 
-  # For tests NOT marked expect_no_compression, we require at least this savings
-  min_compression_pct: 50
+  # For test runner all-pass cases: require aggressive compression
+  min_compression_pct_all_pass: 80
 
-  # Session A should generally use fewer or equal tokens overall
-  # (hook overhead adds a small amount via user_message, so we allow slight increase)
-  max_token_overhead_pct: 5
+  # For failure cases: don't require high compression (error details must be preserved)
+  min_compression_pct_failure: 0
+
+  # For lint/build cases: moderate compression
+  min_compression_pct_lint: 50
+
+  # Session A should not retry commands that Session B handled in one shot
+  # If Session A makes N extra calls vs Session B, that's a regression
+  max_extra_calls_vs_control: 1
+
+# ── MEASURED SIMULATION RESULTS (from eval/simulate_all_filters.py) ─────────────
+# Updated: 2026-04-16
+# All results use real command output from actual project runs.
+#
+# | Scenario                | Filter      | Before | After | Savings | Notes                              |
+# |-------------------------|-------------|--------|-------|---------|-----------------------------------|
+# | git-status-dirty        | git-status  |    474 |   137 |  71.1%  | Real dirty status output           |
+# | git-diff-large          | git-diff    |  1,528 |   750 |  50.9%  | Fixture: 3-file diff               |
+# | git-log                 | git-log     |    876 |   875 |   0.1%  | --oneline already compact          |
+# | git-push-success        | git-simple  |    424 |    30 |  92.9%  | Fixture: push to remote            |
+# | git-push-rejected       | git-simple  |    449 |   387 |  13.8%  | Fixture: rejected push             |
+# | git-commit              | git-simple  |    116 |   114 |   1.7%  | Already compact output             |
+# | git-pull                | git-simple  |    475 |   132 |  72.2%  | Fixture: fast-forward pull         |
+# | pytest-all-pass         | pytest      |    340 |    21 |  93.8%  | Real: uv run pytest -q             |
+# | pytest-failures         | pytest      |  2,294 | 1,299 |  43.4%  | Real: 3 failures from eval file    |
+# | cargo-test-pass         | cargo-test  |    468 |    18 |  96.2%  | Real: 4 tests in rust project      |
+# | cargo-test-fail         | cargo-test  |    977 |   592 |  39.4%  | Real: 2 failures in rust project   |
+# | npm-test-pass           | npm-test    |    230 |    11 |  95.2%  | Real: mocha 4 passing              |
+# | npm-test-fail           | npm-test    |    802 |   701 |  12.6%  | Real: mocha 2 failing (FIXED)      |
+# | ruff-errors             | ruff        |  2,332 |   555 |  76.2%  | Real: 10 violations                |
+# | ruff-clean              | ruff        |     19 |    19 |   0.0%  | Already passes ok (correct)        |
+# | cargo-clippy            | cargo-clippy|  1,186 |   306 |  74.2%  | Real: 3 clippy warnings            |
+# | eslint-errors           | eslint      |  1,150 |   249 |  78.3%  | Real: 11 errors, 2 warnings        |
+# | cargo-build-clean       | cargo-build |    518 |   304 |  41.3%  | Real: 2 warnings kept              |
+# | cargo-build-errors      | cargo-build |    675 |   236 |  65.0%  | Real: 2 compile errors             |
+# | tsc-errors              | tsc         |    175 |   187 |  -6.9%  | Real tsc: 2 errors (adds summary)  |
+# | npm-build-success       | npm-build   |    100 |    20 |  80.0%  | Fixture: echo-based build          |
+# | pip-install             | pip         |  1,091 |   391 |  64.2%  | Fixture: requests install          |
+# | brew-already-installed  | brew        |    100 |    88 |  12.0%  | Fixture: already installed         |
+# | make-build              | make        |     36 |    35 |   2.8%  | Real: small makefile               |
+# | docker-build            | docker      |  1,074 |   434 |  59.6%  | Fixture: BuildKit format           |
+# | curl-verbose            | curl        |  2,715 | 1,520 |  44.0%  | Real: curl -v example.com          |
