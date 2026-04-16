@@ -50,7 +50,10 @@ class TestClassifyPassthrough:
         """Non-bash tools always pass through."""
         data = {
             "tool_name": "read_file",
-            "result": {"output": {"returncode": 0, "stdout": "file contents"}, "success": True},
+            "result": {
+                "output": {"returncode": 0, "stdout": "file contents"},
+                "success": True,
+            },
         }
         result = await hook.on_tool_post("tool:post", data)
         assert result.action == "continue"
@@ -60,7 +63,10 @@ class TestClassifyPassthrough:
         """write_file tool passes through."""
         data = {
             "tool_name": "write_file",
-            "result": {"output": {"returncode": 0, "stdout": "written"}, "success": True},
+            "result": {
+                "output": {"returncode": 0, "stdout": "written"},
+                "success": True,
+            },
         }
         result = await hook.on_tool_post("tool:post", data)
         assert result.action == "continue"
