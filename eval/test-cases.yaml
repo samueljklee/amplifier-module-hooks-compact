@@ -317,13 +317,28 @@ test_cases:
     expected_commands: [ruff]
     max_acceptable_tool_calls: 6
     notes: |
-      Compressed output (71.9% savings): 9 violations, each with file:line.
+      Compressed output (71.4% savings): 9 violations, each with file:line.
       Success criteria:
         - Model sees compressed output and goes straight to fixing (no re-run)
         - Model correctly identifies all 9 violations from compressed output
         - Model edits /tmp/lint_issues.py to fix all violations
         - Session A (with hook) uses same or fewer turns as Session B
       Violations: F401 (4x, lines 3-6), F841 (2x, lines 11-12), E712 (2x, lines 15,17), E722 (line 26)
+
+    measured_results:
+      session_a_id: e99cc1be-43d2-4059-a683-c2c0ed81598a
+      session_b_id: 269fae52-65a4-4cae-91e8-147589a4e692
+      input_chars: 2412
+      output_chars: 691
+      savings_pct: 71.4
+      with_turns: 1
+      without_turns: 1
+      with_calls: 1
+      without_calls: 1
+      model_reran_cmd: false
+      all_violations_identified: true
+      verdict: PASS
+      note: "Model identified all 9 violations (F401×4, F841×2, E712×2, E722) with file:line from compressed output. No re-run needed."
 
   - id: pytest-fix-continuation
     name: "pytest failures and fix all failing tests (continuation)"
@@ -342,6 +357,20 @@ test_cases:
         - Model fixes test_multiply_correct (:29), test_divide_basic (:33), test_add_large (:43)
         - Session A (with hook) uses same or fewer turns as Session B
       Note: 37% savings is intentionally conservative — failure details must be preserved.
+
+    measured_results:
+      session_a_id: 22f16333-76b4-494b-beee-34a4c985794f
+      input_chars: 2863
+      output_chars: 1785
+      savings_pct: 37.7
+      with_turns: 1
+      without_turns: 1  # (estimated, same prompt)
+      with_calls: 1
+      without_calls: 1  # (estimated)
+      model_reran_cmd: false
+      all_failures_identified: true
+      verdict: PASS
+      note: "Model identified all 3 failures (test_multiply_correct:29, test_divide_basic:33, test_add_large:43) with assertion errors. Compressed tracebacks preserved full context."
 
   - id: clippy-fix-continuation
     name: "cargo clippy and fix all warnings (continuation)"
