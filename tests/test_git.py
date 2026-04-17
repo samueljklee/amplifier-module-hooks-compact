@@ -111,9 +111,8 @@ class TestFilterGitStatus:
         result = filter_git_status(output, "git status", 0)
         assert "2 commits" in result
 
-    def test_large_untracked_list_truncated(self):
-        """When a repo has many untracked files, the list is truncated to avoid bloat."""
-        # Build a status with 25 untracked files
+    def test_moderate_untracked_list_shows_all(self):
+        """25 untracked files (below _MAX_LIST_ITEMS=50) are all shown."""
         lines = ["On branch main", "", "Untracked files:"]
         lines.append('  (use "git add ..." to include in what will be committed)')
         for i in range(25):
@@ -122,21 +121,35 @@ class TestFilterGitStatus:
         result = filter_git_status(output, "git status", 0)
         # Count shows 25
         assert "(25)" in result
-        # But file list is truncated
-        assert "+15 more" in result or "more" in result
-        # Result is significantly shorter
-        assert len(result) < len(output) * 0.7
+        # All 25 files should be visible — Crusty's rule: never hide actionable items
+        assert "file_24.txt" in result
+        assert "more" not in result
 
-    def test_large_untracked_list_shows_first_n(self):
-        """First 10 files are always shown even with large untracked list."""
+    def test_huge_untracked_list_truncated(self):
+        """60 untracked files (above _MAX_LIST_ITEMS=50) are truncated."""
+        lines = ["On branch main", "", "Untracked files:"]
+        lines.append('  (use "git add ..." to include in what will be committed)')
+        for i in range(60):
+            lines.append(f"\tfile_{i:02d}.txt")
+        output = "\n".join(lines) + "\n"
+        result = filter_git_status(output, "git status", 0)
+        assert "(60)" in result
+        # First 50 shown, 10 more hidden
+        assert "+10 more" in result
+        assert "file_49.txt" in result
+        assert "file_50.txt" not in result
+
+    def test_moderate_untracked_list_shows_all_files(self):
+        """15 untracked files are all shown (below _MAX_LIST_ITEMS=50)."""
         lines = ["On branch main", "", "Untracked files:"]
         lines.append('  (use "git add ..." to include in what will be committed)')
         for i in range(15):
             lines.append(f"\tfile_{i:02d}.py")
         output = "\n".join(lines) + "\n"
         result = filter_git_status(output, "git status", 0)
-        # First 10 files should be in output
+        # All 15 files should be visible
         assert "file_00.py" in result
+        assert "file_14.py" in result
         assert "file_09.py" in result
         # 11th file should not be listed directly (it's in the "+5 more" count)
         assert "(15)" in result

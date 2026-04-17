@@ -12,8 +12,9 @@ from __future__ import annotations
 import re
 
 # Maximum items to show in staged/unstaged/untracked file lists.
-# Large repos with many untracked files would otherwise produce minimal savings.
-_MAX_LIST_ITEMS = 10
+# Set high (50) to avoid hiding actionable items behind a count.
+# Crusty's rule: "Never hide actionable items behind a count."
+_MAX_LIST_ITEMS = 50
 
 # git diff limits — keep enough context for the model to understand changes
 # without drowning it in raw diff content.
@@ -252,7 +253,7 @@ def filter_git_diff(output: str, command: str, exit_code: int | None) -> str:
     # --- Fallback: no stat lines, no unified diff blobs → just list filenames ---
     if file_sections:
         names = [f for f, _ in file_sections]
-        shown_names = names[:5]
+        shown_names = names[:_MAX_LIST_ITEMS]
         extra = len(names) - len(shown_names)
         summary = ", ".join(shown_names)
         if extra > 0:

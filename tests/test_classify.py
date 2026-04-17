@@ -238,14 +238,42 @@ class TestCompoundCommandPassthrough:
         assert result is not None
         assert result[0] == "pytest"
 
-    def test_piped_pytest_still_matches(self):
-        """pytest ... | tail -50 uses pipe not &&, must still match pytest filter."""
+    def test_piped_command_returns_none(self):
+        """Piped commands must NOT be compressed — the pipe changes the output format.
+
+        When the model uses pipes (grep, tail, head, sed, etc.), it already has
+        its own compression strategy.  Our filter should not double-compress,
+        and more critically, the filter receives the LAST command's output but
+        applies the FIRST command's parser — destroying data.
+
+        Real-world example from DTU testing:
+          git status --porcelain | grep '^??' | sed 's/^?? //'
+          → filter_git_status sees grep output → "branch: unknown\\nclean"
+          → model retried 2 extra times (4 turns instead of 2)
+        """
         hook = self._make_hook()
         result = hook._registry.classify(
             "cd /Users/samule/repo && uv run pytest 2>&1 | tail -50"
         )
-        assert result is not None
-        assert result[0] == "pytest"
+        assert result is None, "piped command should not match any filter"
+
+    def test_piped_git_status_returns_none(self):
+        """git status --porcelain | grep '^??' must NOT be compressed."""
+        hook = self._make_hook()
+        result = hook._registry.classify(
+            "git status --porcelain | grep '^??' | sed 's/^?? //'"
+        )
+        assert result is None, (
+            "piped git status should not match — filter destroys piped output"
+        )
+
+    def test_piped_git_status_short_returns_none(self):
+        """git status --short | grep '^??' must NOT be compressed."""
+        hook = self._make_hook()
+        result = hook._registry.classify(
+            "git status --short | grep '^??' | cut -d' ' -f2-"
+        )
+        assert result is None
 
     def test_semicolon_compound_returns_none(self):
         """git status ; git log: semicolon compound should not be compressed."""

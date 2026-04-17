@@ -184,7 +184,8 @@ class FilterRegistry:
         # Examples that would be incorrectly filtered without this guard:
         #   "git status && git log --oneline -10 && git diff"
         #   "cd /repo && git status && git diff"  (after cd-strip: "git status && git diff")
-        if "&&" in matchable or " ; " in matchable:
+        #   "git status --porcelain | grep '^??'"  (pipe changes the output format)
+        if "&&" in matchable or " ; " in matchable or " | " in matchable:
             return None
 
         # Priority 1: User YAML filters (project-local or user-global)
