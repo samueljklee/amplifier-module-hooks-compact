@@ -1,30 +1,6 @@
 # hooks-compact
 
-An [Amplifier](https://github.com/microsoft/amplifier) hook module that compresses bash tool output by 60–96% before it enters the LLM context window. Inspired by [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk).
-
-**Why?** A typical AI coding session generates tens of thousands of tokens of raw bash output (`git status` boilerplate, test runner noise, compilation progress). With hooks-compact, the signal reaches the model and the noise doesn't.
-
-> **DTU A/B Verified (all 20 scenarios PASS):** `cargo test` 95% · `pytest` 94% · `npm test` 94% · `git push` 93% · `npm run build` 80% · `ruff check` 76% · `eslint` 78% · `cargo clippy` 74% · `git pull` 72% · `git diff` 71% · `git status` 68% · `cargo build` 65% errors / 41% warnings · `docker build` 60% · `curl -v` 44%
->
-> **0 regressions across all 20 scenarios** — with-hook sessions used equal or fewer turns in every test. Compression never caused model retries.
-
----
-
-## DTU A/B Test Summary
-
-All 20 filter scenarios tested in isolated DTU containers (with-hook vs without-hook):
-
-| Metric | WITH hook | WITHOUT hook | Delta |
-|--------|-----------|-------------|-------|
-| Total stdout chars | 12,057 | 19,153 | **-37.0%** |
-| Total turns | 112 | 126 | **-11.1%** |
-| Scenarios with fewer turns | 7/20 | — | |
-| Scenarios with equal turns | 11/20 | — | |
-| Scenarios with more turns | 2/20 → 0/20 (fixed) | — | |
-
-**Key principle:** Compress noise, preserve signal. On success, compress aggressively. On failure, preserve every detail the model needs to fix the issue.
-
----
+An [Amplifier](https://github.com/microsoft/amplifier) hook module that compresses bash tool output by 60–96% before it enters the LLM context window. Across all 20 DTU-tested scenarios (isolated container A/B testing), hooks-compact delivers **37% stdout reduction** (12,057 vs 19,153 chars) and **11% fewer turns** (112 vs 126), with 0 regressions — compression never caused model retries. 7/20 scenarios used fewer turns, 11/20 used equal turns, and the 2 initial regressions were fixed to 0/20.
 
 ## Quick Start
 
@@ -36,9 +12,7 @@ amplifier bundle add git+https://github.com/samueljklee/amplifier-module-hooks-c
 
 That's it. All bash output is now compressed automatically.
 
-### Alternative: Direct hook reference
-
-If you want to customize configuration, add the hook directly in your bundle YAML:
+**Alternative** — direct hook reference in your bundle YAML (for customizing config):
 
 ```yaml
 hooks:
@@ -50,8 +24,6 @@ hooks:
       debug: false
 ```
 
----
-
 ## How It Works
 
 Every `bash` tool result flows through a 4-stage pipeline:
@@ -61,11 +33,78 @@ Every `bash` tool result flows through a 4-stage pipeline:
 3. **FILTER** — apply command-specific compression (Python filter or YAML pipeline)
 4. **DECIDE** — return `HookResult(action="modify")` with compressed output, or `continue` if no savings
 
-**Fail-safe**: any error at any stage returns the raw output unchanged.
+**Fail-safe**: any error at any stage returns the raw output unchanged. This is a `tool:post` hook with `modify` action — the original output is never lost.
 
----
+**Asymmetric compression**: success = aggressive (one-line summary, 90–99% savings). Failure = conservative (preserve tracebacks, error messages, file:line — 13–43% savings).
 
-## Configuration Reference
+**End-to-end example** — `cargo test` with 262 passing tests (4,823 chars, 262 lines) compresses to:
+
+```
+✓ 262 passed (0.08s)
+```
+
+That's 99.8% savings — 11 chars instead of 4,823.
+
+## Built-in Filters
+
+### Python Filters (complex, structured parsing)
+
+All numbers are DTU A/B verified (isolated container testing, with-hook vs without-hook). ✓ marks verified scenarios.
+
+| Command | Strategy | Success/Clean Savings | Failure/Error Savings | Notes |
+|---------|----------|----------------------|----------------------|-------|
+| `git status` | Branch + file groups, strip hints, cap lists at 10 | **68%** ✓ | — | DTU verified |
+| `git diff` | Diffstat + first 8 changed lines per file (≤5 files) | **71%** ✓ | **71%** ✓ | DTU verified |
+| `git log` | One-line-per-commit format | ~0% | — | Already compact |
+| `git push` | Compact ref on success; preserve errors on failure | **93%** ✓ | **14%** (correct) | Errors always preserved |
+| `git pull` | Branch refs + file counts; strip remote chatter | **72%** ✓ | — | DTU verified |
+| `git add` | Returns `"ok"` (no output on success) | 0% | — | |
+| `git commit` | Hash+message + files changed; strip remote noise | ~2% | — | Already compact |
+| `cargo test` | `"✓ N passed (Xs)"` on all-pass; full failure blocks with panics | **95%** ✓ | **39%** ✓ | Full panics preserved |
+| `pytest` | Same asymmetric behavior | **94%** ✓ | **43%** ✓ | Full tracebacks preserved |
+| `npm test` (jest/vitest/mocha) | Auto-detected; failures show all numbered blocks | **94%** ✓ | **13%** ✓ | Full error blocks preserved |
+| `cargo build` | `"ok"` on success; errors + warning locations on failure | **41%** ✓ | **65%** ✓ | DTU verified |
+| `tsc` | Error-only; `"ok"` on clean; count summary on failure | 0% | ~-7% | Adds count summary |
+| `npm run build` | `"ok"` on success; error lines on failure | **80%** ✓ | — | DTU verified |
+| `cargo clippy` | Each warning listed with file:line; all shown (no cap) | **74%** ✓ | — | No occurrence cap |
+| `ruff check` | Group-by-rule; all violations with file:line; no occurrence cap | 0% (already short) | **76%** ✓ | DTU verified |
+| `eslint` | Group-by-rule; all violations with file:line; no occurrence cap | 0% | **78%** ✓ | Fixed from 15→1 turn regression |
+
+### YAML Filters (declarative, regex pipelines)
+
+| Command | Strategy | Savings |
+|---------|----------|---------|
+| `make` | Strip `make[N]:` entering/leaving directory lines; `"make: ok"` on empty | 3–94% (varies) ✓ |
+| `docker build` | Strip BuildKit progress lines; keep final image | **60%** ✓ |
+| `pip install` | Strip download progress bars; preserve state | **25%** ✓ |
+| `brew install` | Short-circuit "already installed"; strip fetch lines on fresh install | 12–31% ✓ |
+| `curl` (verbose) | Strip TLS handshake and connection noise; keep response headers + body | **44%** ✓ |
+
+**Docker note**: Both legacy format (` ---> <hash>`, `Using cache`) and modern BuildKit format (` => [internal]`, ` => CACHED [N/M]`, ` => => transferring`) are handled.
+
+### Tool Runner Prefixes
+
+Tool runner prefixes are automatically stripped before matching, so all patterns work whether the model uses the tool directly or via a package runner:
+
+| What you run | What the filter sees |
+|-------------|---------------------|
+| `uvx ruff check` | → `ruff check` |
+| `uv run pytest -v` | → `pytest -v` |
+| `npx eslint src/` | → `eslint src/` |
+| `bunx vitest run` | → `vitest run` |
+| `poetry run pytest` | → `pytest` |
+| `python -m pytest` | → `pytest` |
+| `cd /path && uvx ruff` | → `ruff ...` |
+
+### Compression Philosophy
+
+- **Never hide actionable items behind a count** — if the model needs to act on each item (fix each lint violation, resolve each test failure), every item must be visible with file:line
+- **Success = aggressive compression** (one-line summary, 90-99% savings)
+- **Failure = conservative compression** (preserve tracebacks, error messages, file:line — 13-43% savings)
+- **Small output = passthrough** (< 5 lines, nothing to compress)
+- **If compression causes even ONE extra turn, the filter is wrong** — a single model turn costs ~3,000 tokens in context
+
+## Configuration
 
 ```yaml
 hooks:
@@ -84,69 +123,7 @@ hooks:
         retention_days: 90    # auto-prune records older than N days
 ```
 
----
-
-## Built-in Filters
-
-### Python Filters (complex, structured parsing)
-
-All numbers are DTU A/B verified (isolated container testing, with-hook vs without-hook). ✓ marks verified scenarios.
-
-| Command Pattern | Strategy | All-pass / Clean | With failures / Errors | Notes |
-|----------------|----------|-----------------|----------------------|-------|
-| `git status` | Branch + file groups, strip hints, cap lists at 10 | **68%** ✓ | — | DTU verified |
-| `git diff` | Diffstat + first 8 changed lines per file (≤5 files) | **71%** ✓ | **71%** ✓ | DTU verified |
-| `git log` | One-line-per-commit format | ~0% | — | Already compact |
-| `git push` | Compact ref on success; preserve errors on failure | **93%** ✓ | **14%** (correct) | Errors always preserved |
-| `git pull` | Branch refs + file counts; strip remote chatter | **72%** ✓ | — | DTU verified |
-| `git add` | Returns `"ok"` (no output on success) | 0% | — | |
-| `git commit` | Hash+message + files changed; strip remote noise | ~2% | — | Already compact |
-| `cargo test` | `"✓ N passed (Xs)"` on all-pass; full failure blocks with panics | **95%** ✓ | **39%** ✓ | DTU verified, full panics preserved |
-| `pytest` | Same asymmetric behavior | **94%** ✓ | **43%** ✓ | DTU verified, full tracebacks preserved |
-| `npm test` (jest/vitest/mocha) | Auto-detected; failures show all numbered blocks | **94%** ✓ | **13%** ✓ | DTU verified, full error blocks preserved |
-| `cargo build` | `"ok"` on success; errors + warning locations on failure | **41%** ✓ | **65%** ✓ | DTU verified |
-| `tsc` | Error-only; `"ok"` on clean; count summary on failure | 0% | ~-7% | Adds count summary |
-| `npm run build` | `"ok"` on success; error lines on failure | **80%** ✓ | — | DTU verified |
-| `cargo clippy` | Each warning listed separately with file:line; all shown (no cap) | **74%** ✓ | — | DTU verified, no occurrence cap |
-| `ruff check` | Group-by-rule; all violations with file:line; no occurrence cap | 0% (already short) | **76%** ✓ | DTU verified |
-| `eslint` | Group-by-rule; all violations with file:line; no occurrence cap | 0% | **78%** ✓ | DTU verified, fixed from 15→1 turn regression |
-
-**Tool runner prefixes** are automatically stripped before matching, so all patterns work
-whether the model uses the tool directly or via a package runner:
-
-| Works natively | After prefix stripping |
-|---------------|----------------------|
-| `uvx ruff check` | → `ruff check` |
-| `uv run pytest -v` | → `pytest -v` |
-| `npx eslint src/` | → `eslint src/` |
-| `bunx vitest run` | → `vitest run` |
-| `poetry run pytest` | → `pytest` |
-| `python -m pytest` | → `pytest` |
-| `cd /path && uvx ruff` | → `ruff ...` |
-
-### YAML Filters (declarative, regex pipelines)
-
-| Command Pattern | Strategy | Savings |
-|----------------|----------|---------|
-| `make` | Strip `make[N]:` entering/leaving directory lines; `"make: ok"` on empty | 3–94% (varies) ✓ |
-| `docker build` | Strip BuildKit progress lines (`=> [internal]`, `=> CACHED`); keep final image | **60%** ✓ |
-| `pip install` | Strip download progress bars only; preserve state (already satisfied, cached) | **25%** ✓ |
-| `brew install` | Short-circuit "already installed"; strip fetch lines on fresh install | 12–31% ✓ |
-| `curl` (verbose) | Strip TLS handshake and connection noise; keep response headers + body | **44%** ✓ |
-
-**Docker note**: Both legacy format (` ---> <hash>`, `Using cache`) and modern BuildKit format (` => [internal]`, ` => CACHED [N/M]`, ` => => transferring`) are handled.
-
-### Compression Philosophy
-
-- **Never hide actionable items behind a count** — if the model needs to act on each item (fix each lint violation, resolve each test failure), every item must be visible with file:line
-- **Success = aggressive compression** (one-line summary, 90-99% savings)
-- **Failure = conservative compression** (preserve tracebacks, error messages, file:line — 13-43% savings)
-- **Small output = passthrough** (< 5 lines, nothing to compress)
-- **If compression causes even ONE extra turn, the filter is wrong** — a single model turn costs ~3,000 tokens in context
-
----
-
-## Adding Custom YAML Filters
+## Custom YAML Filters
 
 Create a YAML filter file at `.amplifier/output-filters.yaml` in your project (or `~/.amplifier/output-filters.yaml` for user-global):
 
@@ -167,7 +144,7 @@ my-script:
   tail_lines: 20
 ```
 
-**YAML pipeline stages** (run in strict order):
+**Pipeline stages** (run in strict order):
 
 | Stage | Key | Description |
 |-------|-----|-------------|
@@ -178,16 +155,14 @@ my-script:
 | 4 | `max_lines` | Absolute cap (adds truncation marker) |
 | 5 | `on_empty` | Fallback message when all lines are filtered out |
 
-User filters have **higher priority** than built-in filters, so you can override any default.
-
----
+**Lookup priority**: project-local → user-global → built-in Python → built-in YAML → passthrough.
 
 ## Debug Mode
 
-Set `debug: true` to see exactly what's happening for every compression:
+Set `debug: true` in your config to see exactly what's happening for every compression:
 
 ```
-┌─ hooks-compact ──────────────────────────────────────────────────────
+┌─ hooks-compact ──────────────────────────────────────────────────
 │ Command:  cargo test
 │ Filter:   cargo-test (Python)
 │ Input:    4823 chars (262 lines)
@@ -201,24 +176,18 @@ Set `debug: true` to see exactly what's happening for every compression:
 │
 │ ── COMPRESSED ──
 │ ✓ 262 passed (0.08s)
-└──────────────────────────────────────────────────────────────────────
+└──────────────────────────────────────────────────────────────────
 ```
 
 Debug output goes to the user message only — **not injected into LLM context**.
 
----
-
 ## Telemetry
 
-Local compression stats are stored in `~/.amplifier/hooks-compact/telemetry.db` (SQLite).
-This is local-only — no data leaves your machine. You can disable it:
+**Local analytics** (on by default): compression stats stored in `~/.amplifier/hooks-compact/telemetry.db` (SQLite). All data stays on your machine — no data leaves. Disable with `telemetry.local: false`.
 
-```yaml
-telemetry:
-  local: false
-```
+**Remote telemetry** (off by default): requires explicit opt-in via `telemetry.remote: true`.
 
-**What is stored:** command name (first token only, no args), filter used, character counts, savings percentage, and exit code. No command arguments, no output content, no file paths.
+**What is stored**: command name (first token only, no args), filter used, character counts, savings percentage, and exit code. **Never collected**: command arguments, output content, file paths.
 
 Query your stats:
 
@@ -231,12 +200,9 @@ sqlite3 ~/.amplifier/hooks-compact/telemetry.db \
    ORDER BY avg DESC"
 ```
 
----
+## Eval & Regression Testing
 
-## Regression Eval System
-
-The `eval/` directory contains a regression harness to verify compression doesn't
-hurt model performance when filters change. Includes **26 test cases** covering all filter categories:
+The `eval/` directory contains a regression harness to verify compression doesn't hurt model performance. Includes **26 test cases** covering all filter categories:
 
 ```bash
 # Run all test cases (A/B with and without the hook)
@@ -252,19 +218,13 @@ hurt model performance when filters change. Includes **26 test cases** covering 
 ./eval/run-eval.sh --list
 ```
 
-**PASS criteria**: Session A (with hook) must not make more than 1 extra bash tool call
-vs Session B (without). This catches the key regression pattern — over-compression causing
-the model to retry commands to get more context.
+**PASS criteria**: Session A (with hook) must not make more than 1 extra bash tool call vs Session B (without). This catches over-compression causing model retries.
 
-See [`eval/README.md`](eval/README.md) for full documentation.
-
----
+See [`eval/README.md`](eval/README.md) for full details.
 
 ## Attribution
 
-Filter strategies and compression approaches are directly inspired by [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk) (MIT License). The innovation here is the Amplifier hook architecture (`tool:post` + `modify`) and user-extensible YAML filters.
-
----
+Filter strategies and compression approaches are directly inspired by [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk) (MIT License). What's different: the Amplifier hook architecture (`tool:post` + `modify`), user-extensible YAML filters, and bundle distribution.
 
 ## License
 
