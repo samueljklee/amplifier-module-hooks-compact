@@ -229,19 +229,28 @@ class TestPipFilter:
         assert "Downloading" not in result
         assert "Successfully installed" in result
 
-    def test_strips_using_cached_line(self) -> None:
-        """'  Using cached ...' lines are stripped."""
+    def test_preserves_using_cached_line(self) -> None:
+        """'Using cached' is STATE info — the model needs it to know what's fresh vs cached.
+
+        Crusty's rule: strip noise (download progress bars), not signal (state transitions).
+        Previously stripped; now preserved so the model doesn't re-run verification commands.
+        """
         config = _load("pip")
         output = (
             "  Using cached requests-2.31.0-py3-none-any.whl (62 kB)\n"
             "Successfully installed requests-2.31.0\n"
         )
         result = apply_yaml_filter(output, config)
-        assert "Using cached" not in result
+        assert "Using cached" in result, f"'Using cached' should be preserved: {result!r}"
         assert "Successfully installed" in result
 
-    def test_strips_requirement_already_satisfied(self) -> None:
-        """'Requirement already satisfied: ...' lines are stripped."""
+    def test_preserves_requirement_already_satisfied(self) -> None:
+        """'Requirement already satisfied' is STATE info — the model needs it to know
+        what was already installed vs newly installed.
+
+        Previously stripped; now preserved. Without it, the model ran extra
+        verification commands (10 turns vs 5) to confirm installation state.
+        """
         config = _load("pip")
         output = (
             "Requirement already satisfied: requests in /usr/lib/python3\n"
@@ -249,17 +258,22 @@ class TestPipFilter:
             "Successfully installed foo-1.0\n"
         )
         result = apply_yaml_filter(output, config)
-        assert "Requirement already satisfied" not in result
+        assert "Requirement already satisfied" in result, (
+            f"'Requirement already satisfied' should be preserved: {result!r}"
+        )
         assert "Successfully installed" in result
 
-    def test_on_empty_fallback(self) -> None:
-        """When all lines are stripped, on_empty='pip: ok (nothing changed)' is returned."""
+    def test_on_empty_fallback_only_for_download_lines(self) -> None:
+        """on_empty fires ONLY when output consists entirely of download progress bars.
+
+        'Requirement already satisfied' lines are no longer stripped, so they
+        won't trigger the empty fallback anymore.
+        """
         config = _load("pip")
-        # Only "already satisfied" and blank lines
+        # Only download progress lines — these ARE stripped
         output = (
-            "Requirement already satisfied: foo in /usr\n"
-            "\n"
-            "Requirement already satisfied: bar in /usr\n"
+            "  Downloading requests-2.31.0-py3-none-any.whl (62 kB)\n"
+            "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 62.3/62.3 kB 1.2 MB/s eta 0:00:00\n"
         )
         result = apply_yaml_filter(output, config)
         assert result == "pip: ok (nothing changed)"

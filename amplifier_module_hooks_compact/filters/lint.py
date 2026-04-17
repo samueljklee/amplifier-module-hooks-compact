@@ -120,20 +120,25 @@ def filter_cargo_clippy(output: str, command: str, exit_code: int | None) -> str
             loc_str = f" ({loc})" if loc else ""
             result_parts.append(f"warning[{display_code}]: {desc}{loc_str}")
         elif len(unique_descs) == 1:
-            # All same description (e.g. same rule, same message) — show count + locations
+            # All same description (e.g. same rule, same message) — show count + ALL locations
             result_parts.append(f"warning[{display_code}]: {unique_descs[0]} ({n}×)")
-            for desc, loc in items[:3]:
+            shown = items[:50]  # safety valve at 50, not 5
+            for desc, loc in shown:
                 if loc:
                     result_parts.append(f"  {loc}")
+            if n > 50:
+                result_parts.append(f"  (+{n - 50} more — run cargo clippy for full list)")
         else:
             # Different descriptions per occurrence (e.g. unused variable `x` vs `y`)
-            # Show each with its location so model knows every name and where to fix it
+            # Show EVERY occurrence with its location so model knows every name and where to fix it.
+            # Crusty's rule: never hide actionable items behind a count.
             result_parts.append(f"warning[{display_code}] ({n}×):")
-            for desc, loc in items[:5]:
+            shown = items[:50]  # safety valve at 50, not 5
+            for desc, loc in shown:
                 loc_str = f" ({loc})" if loc else ""
                 result_parts.append(f"  {desc}{loc_str}")
-            if n > 5:
-                result_parts.append(f"  (+{n - 5} more)")
+            if n > 50:
+                result_parts.append(f"  (+{n - 50} more — run cargo clippy for full list)")
 
     if summary_line:
         result_parts.append(summary_line)
@@ -240,29 +245,30 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
             loc_str = f" ({loc})" if loc else ""
             result_parts.append(f"{rule_code}: {desc}{loc_str}")
         elif len(unique_items) == 1:
-            # Multiple occurrences, all identical descriptions — show count + all locations
+            # Multiple occurrences, all identical descriptions — show count + ALL locations.
+            # Crusty's rule: never hide actionable items behind a count.
             desc = unique_items[0][0]
-            locs = [loc for _, loc in items if loc][:5]
-            if locs:
-                locs_str = ", ".join(locs)
+            locs = [loc for _, loc in items if loc]
+            shown_locs = locs[:50]  # safety valve at 50, not 5
+            if shown_locs:
+                locs_str = ", ".join(shown_locs)
                 result_parts.append(f"{rule_code} ({n}×): {desc} → {locs_str}")
+                if len(locs) > 50:
+                    result_parts.append(f"  (+{len(locs) - 50} more — run ruff for full list)")
             else:
                 result_parts.append(f"{rule_code} ({n}×): {desc}")
-        elif len(unique_items) <= 5:
-            # 2–5 unique descriptions: show each with its location
-            lines_out = [f"{rule_code} ({n}×):"]
-            for desc, loc in unique_items:
-                loc_str = f" → {loc}" if loc else ""
-                lines_out.append(f"  {desc}{loc_str}")
-            result_parts.append("\n".join(lines_out))
         else:
-            # Many unique descriptions: show first 5 + count of rest
+            # Multiple unique descriptions — show ALL with their locations.
+            # Crusty's rule: never hide actionable items behind a count.
+            # Safety valve at 50 (not 5) prevents truly pathological output.
             lines_out = [f"{rule_code} ({n}×):"]
-            for desc, loc in unique_items[:5]:
+            shown = unique_items[:50]
+            for desc, loc in shown:
                 loc_str = f" → {loc}" if loc else ""
                 lines_out.append(f"  {desc}{loc_str}")
-            rest = len(unique_items) - 5
-            lines_out.append(f"  (+{rest} more — run ruff for full list)")
+            if len(unique_items) > 50:
+                rest = len(unique_items) - 50
+                lines_out.append(f"  (+{rest} more — run ruff for full list)")
             result_parts.append("\n".join(lines_out))
 
     if summary_line:
@@ -348,24 +354,31 @@ def filter_eslint(output: str, command: str, exit_code: int | None) -> str:
                 loc_str = f" ({file_loc})" if file_loc else ""
                 result_parts.append(f"{prefix} {rule_name}: {msg}{loc_str}")
             elif len(unique_msgs) == 1:
-                # Same message, different files — show all locations
+                # Same message, different files — show ALL locations.
+                # Crusty's rule: never hide actionable items behind a count.
                 msg = unique_msgs[0]
-                locs = [loc for _, loc in items if loc][:5]
-                if locs:
-                    locs_str = ", ".join(locs)
+                locs = [loc for _, loc in items if loc]
+                shown_locs = locs[:50]  # safety valve at 50, not 5
+                if shown_locs:
+                    locs_str = ", ".join(shown_locs)
                     result_parts.append(
                         f"{prefix} {rule_name} ({n}×): {msg} → {locs_str}"
                     )
+                    if len(locs) > 50:
+                        result_parts.append(f"  (+{len(locs) - 50} more — run eslint for full list)")
                 else:
                     result_parts.append(f"{prefix} {rule_name}: {msg} ({n}×)")
             else:
-                # Different messages per occurrence — show each with file:line
+                # Different messages per occurrence — show EVERY occurrence with file:line.
+                # Crusty's rule: never hide actionable items behind a count.
+                # Safety valve at 50 (not 5) prevents truly pathological output.
                 result_parts.append(f"{prefix} {rule_name} ({n}×):")
-                for msg, file_loc in items[:5]:
+                shown = items[:50]
+                for msg, file_loc in shown:
                     loc_str = f" → {file_loc}" if file_loc else ""
                     result_parts.append(f"  {msg}{loc_str}")
-                if n > 5:
-                    result_parts.append(f"  (+{n - 5} more)")
+                if n > 50:
+                    result_parts.append(f"  (+{n - 50} more — run eslint for full list)")
 
     if summary_line:
         result_parts.append(summary_line)

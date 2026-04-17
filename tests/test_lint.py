@@ -302,8 +302,13 @@ class TestFilterRuffMultiDescription:
         result = filter_ruff(output, "ruff check src/main.py", 1)
         assert "src/main.py:17" in result, f"Expected location in: {result!r}"
 
-    def test_many_unique_descriptions_shows_truncation_notice(self):
-        """When >5 unique descriptions, a '+N more' notice is shown."""
+    def test_all_unique_descriptions_shown_no_truncation_under_safety_valve(self):
+        """8 unique descriptions (well below safety valve of 50) — ALL shown,
+        no truncation notice.
+
+        Crusty's rule: never hide actionable items behind a count.
+        The old [:5] cap forced the model to re-run the linter to find the other 3.
+        """
         from amplifier_module_hooks_compact.filters.lint import filter_ruff
 
         lines = []
@@ -314,8 +319,14 @@ class TestFilterRuffMultiDescription:
         lines.append("Found 8 errors.")
         output = "\n".join(lines) + "\n"
         result = filter_ruff(output, "ruff check src/main.py", 1)
-        assert "+3 more" in result, (
-            f"Expected '+3 more' truncation notice in: {result!r}"
+        # All 8 module names must be visible — no truncation for < 50 items
+        for i in range(8):
+            assert f"`module{i}`" in result, (
+                f"Missing `module{i}` in result (should show all 8):\n{result}"
+            )
+        # No truncation notice for only 8 items (safety valve is 50)
+        assert "more" not in result, (
+            f"Unexpected truncation notice for only 8 items:\n{result}"
         )
 
 

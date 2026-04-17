@@ -1,15 +1,11 @@
 match_command: "^pip\\s+(install|uninstall|upgrade)\\b"
 strip_lines_matching:
-  - "^\\s*Downloading\\s"              # download progress bars
-  - "^\\s*━+\\s"                       # progress bar characters
-  - "^\\s*Using cached\\s"             # cache hit lines
-  - "^\\s*Obtaining\\s"                # metadata fetch lines
-  - "^\\s*Preparing metadata\\s"       # metadata prep lines
-  - "^\\s*Building wheels\\s"          # wheel build progress
-  - "^\\s*Building wheel\\s"
-  - "^\\s*Created wheel\\s"
-  - "^\\s*Stored in directory\\s"      # wheel cache location
-  - "^Requirement already satisfied"   # redundant already-installed
-  - "^\\s*$"                           # blank lines
-max_lines: 30
+  - "^\\s*Downloading\\s"              # download progress bars only
+  - "^\\s*━+\\s*$"                     # standalone progress bar line (━━━━━━)
+  - "^\\s*━+\\s+\\d"                   # progress bar with byte count (━━━ 62 kB)
+max_lines: 60
 on_empty: "pip: ok (nothing changed)"
+# Note: we deliberately keep "Requirement already satisfied", "Using cached",
+# "Obtaining", "Preparing metadata", and other state lines — the model needs
+# to know what was already installed vs newly installed to avoid re-running
+# verification commands. Crusty's rule: strip noise, not signal.
