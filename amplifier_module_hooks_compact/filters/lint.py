@@ -2,7 +2,8 @@
 
 Strategy: group-by-rule compression.
 Deduplicate repeated warnings and count occurrences per rule.
-Reduces 80+ repeated lint warnings to a compact summary.
+Each occurrence preserves file:line so the model can navigate to and fix
+every violation WITHOUT re-running the linter.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import re
 from collections import defaultdict
 
 
-# ── Cargo clippy ──────────────────────────────────────────────────────────────
+# ── Cargo clippy ────────────────────────────────────────────────────────────
 
 # warning: unused import: `std::collections::HashMap`
 #   --> src/main.rs:1:5
@@ -28,14 +29,15 @@ def filter_cargo_clippy(output: str, command: str, exit_code: int | None) -> str
     """Compress cargo clippy output.
 
     Groups warnings by rule (lint code), deduplicates, and counts occurrences.
+    Each occurrence preserves file:line so the model can fix every warning
+    without re-running clippy.
     Errors are always shown in full.
     """
     lines = output.split("\n")
 
-    # Collect warnings grouped by rule
-    # rule_code → (description, count, first_location)
+    # rule_group_key → {rule_code, items: [(description, location_str)], count}
     warnings: dict[str, dict] = defaultdict(
-        lambda: {"description": "", "count": 0, "locations": []}
+        lambda: {"rule_code": "", "items": [], "count": 0}
     )
     errors: list[str] = []
     summary_line = ""
@@ -78,7 +80,7 @@ def filter_cargo_clippy(output: str, command: str, exit_code: int | None) -> str
             if i < len(lines) and _CLIPPY_ARROW_RE.match(lines[i]):
                 location = lines[i].strip()
                 i += 1
-                # Skip the source context lines
+                # Skip source context lines
                 while i < len(lines) and (
                     lines[i].startswith("  ") or lines[i].startswith("\t")
                 ):
@@ -91,12 +93,9 @@ def filter_cargo_clippy(output: str, command: str, exit_code: int | None) -> str
 
             w = warnings[group_key]
             if w["count"] == 0:
-                w["description"] = description
-                # Store original rule_code for display
                 w["rule_code"] = rule_code
             w["count"] += 1
-            if location and len(w["locations"]) < 3:
-                w["locations"].append(location)
+            w["items"].append((description, location))
             continue
 
         i += 1
@@ -107,20 +106,34 @@ def filter_cargo_clippy(output: str, command: str, exit_code: int | None) -> str
     # Errors first
     result_parts.extend(errors)
 
-    # Grouped warnings
+    # Grouped warnings — sorted by count descending
     for _key, data in sorted(warnings.items(), key=lambda x: -x[1]["count"]):
         n = data["count"]
-        desc = data["description"]
-        # Use the stored rule_code for display (may be the original lint code or "misc")
+        items = data["items"]  # list of (description, location_str)
         display_code = data.get("rule_code", "misc")
-        if n == 1 and data["locations"]:
-            result_parts.append(
-                f"warning[{display_code}]: {desc} ({data['locations'][0]})"
-            )
+
+        # Check how many unique descriptions we have
+        unique_descs = list(dict.fromkeys(desc for desc, _ in items))
+
+        if n == 1:
+            desc, loc = items[0]
+            loc_str = f" ({loc})" if loc else ""
+            result_parts.append(f"warning[{display_code}]: {desc}{loc_str}")
+        elif len(unique_descs) == 1:
+            # All same description (e.g. same rule, same message) — show count + locations
+            result_parts.append(f"warning[{display_code}]: {unique_descs[0]} ({n}×)")
+            for desc, loc in items[:3]:
+                if loc:
+                    result_parts.append(f"  {loc}")
         else:
-            result_parts.append(f"warning[{display_code}]: {desc} ({n}×)")
-            for loc in data["locations"][:2]:
-                result_parts.append(f"  {loc}")
+            # Different descriptions per occurrence (e.g. unused variable `x` vs `y`)
+            # Show each with its location so model knows every name and where to fix it
+            result_parts.append(f"warning[{display_code}] ({n}×):")
+            for desc, loc in items[:5]:
+                loc_str = f" ({loc})" if loc else ""
+                result_parts.append(f"  {desc}{loc_str}")
+            if n > 5:
+                result_parts.append(f"  (+{n - 5} more)")
 
     if summary_line:
         result_parts.append(summary_line)
@@ -133,12 +146,12 @@ def filter_cargo_clippy(output: str, command: str, exit_code: int | None) -> str
     return "\n".join(result_parts)
 
 
-# ── ruff check ────────────────────────────────────────────────────────────────
+# ── ruff check ───────────────────────────────────────────────────────────────
 
-# ── Concise format (old/explicit): file:line:col: CODE [*] description ──────────
+# ── Concise format (old/explicit): file:line:col: CODE [*] description ──────
 # src/main.py:10:1: F401 [*] `os` imported but unused
 _RUFF_LINE_RE = re.compile(r"^(.+):(\d+):(\d+): ([A-Z]\d+)\s+(.+)")
-# ── Full format (ruff default since ~0.4): code on its own line, loc below ───
+# ── Full format (ruff default since ~0.4): code on its own line, loc below ──
 # F401 [*] `os` imported but unused
 #  --> src/main.py:1:8
 _RUFF_FULL_CODE_RE = re.compile(r"^([A-Z]\d+)(?:\s*\[.*?\])?\s+(.+)")
@@ -153,18 +166,17 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
     Handles both the old concise format (file:line:col: CODE desc)
     and the new full/rich format (CODE desc \\n --> file:line:col).
 
-    For multi-occurrence rules, shows ALL unique descriptions so the model
-    knows every specific instance (e.g. every unused import name for F401).
+    CRITICAL for continuation: each occurrence shows its file:line so the model
+    can fix every violation without re-running ruff.
     """
     if exit_code == 0:
         return "ok (no ruff issues)"
 
     lines = output.split("\n")
 
-    # rule_code → {descriptions: list[str], count: int, files: set, locations: list[str]}
-    rule_groups: dict[str, dict] = defaultdict(
-        lambda: {"descriptions": [], "count": 0, "files": set(), "locations": []}
-    )
+    # rule_code → {items: [(description, location_str)], count}
+    # location_str: "file.py:10" or "" if not available
+    rule_groups: dict[str, dict] = defaultdict(lambda: {"items": [], "count": 0})
     summary_line = ""
 
     i = 0
@@ -183,11 +195,8 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
             file_path, lineno, _col, rule_code, description = m_concise.groups()
             description = re.sub(r"\s*\[.*?\]", "", description).strip()
             g = rule_groups[rule_code]
-            g["descriptions"].append(description)
+            g["items"].append((description, f"{file_path}:{lineno}"))
             g["count"] += 1
-            g["files"].add(file_path)
-            if len(g["locations"]) < 5:
-                g["locations"].append(f"{file_path}:{lineno}")
             i += 1
             continue
 
@@ -196,18 +205,19 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
         if m_full:
             rule_code = m_full.group(1)
             description = m_full.group(2).strip()
-            g = rule_groups[rule_code]
-            g["descriptions"].append(description)
-            g["count"] += 1
-            # Peek at the next non-empty line for " --> file:line:col"
+            # Strip fix indicator like [*] from description if present
+            description = re.sub(r"^\s*\[.*?\]\s*", "", description).strip()
+            location = ""
             i += 1
+            # Peek at the next non-empty line for " --> file:line:col"
             if i < len(lines):
                 m_loc = _RUFF_FULL_LOC_RE.match(lines[i])
                 if m_loc:
-                    g["files"].add(m_loc.group(1))
-                    if len(g["locations"]) < 5:
-                        g["locations"].append(f"{m_loc.group(1)}:{m_loc.group(2)}")
+                    location = f"{m_loc.group(1)}:{m_loc.group(2)}"
                     i += 1
+            g = rule_groups[rule_code]
+            g["items"].append((description, location))
+            g["count"] += 1
             continue
 
         i += 1
@@ -215,33 +225,45 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
     result_parts: list[str] = []
     for rule_code, data in sorted(rule_groups.items(), key=lambda x: -x[1]["count"]):
         n = data["count"]
-        # Deduplicate while preserving order
+        items = data["items"]  # list of (description, location_str)
+
+        # Deduplicate descriptions while preserving order; pair each with its location
         seen_descs: set[str] = set()
-        unique_descs: list[str] = []
-        for d in data["descriptions"]:
-            if d not in seen_descs:
-                seen_descs.add(d)
-                unique_descs.append(d)
+        unique_items: list[tuple[str, str]] = []
+        for desc, loc in items:
+            if desc not in seen_descs:
+                seen_descs.add(desc)
+                unique_items.append((desc, loc))
 
         if n == 1:
-            # Single occurrence: show full description with location if available
-            loc = data["locations"][0] if data["locations"] else ""
+            desc, loc = unique_items[0]
             loc_str = f" ({loc})" if loc else ""
-            result_parts.append(f"{rule_code}: {unique_descs[0]}{loc_str}")
-        elif len(unique_descs) == 1:
-            # Multiple occurrences, all identical descriptions
-            result_parts.append(f"{rule_code}: {unique_descs[0]} ({n}×)")
-        elif len(unique_descs) <= 5:
-            # 2-5 unique descriptions: show all, separated by " | "
-            combined = " | ".join(unique_descs)
-            result_parts.append(f"{rule_code} ({n}×): {combined}")
+            result_parts.append(f"{rule_code}: {desc}{loc_str}")
+        elif len(unique_items) == 1:
+            # Multiple occurrences, all identical descriptions — show count + all locations
+            desc = unique_items[0][0]
+            locs = [loc for _, loc in items if loc][:5]
+            if locs:
+                locs_str = ", ".join(locs)
+                result_parts.append(f"{rule_code} ({n}×): {desc} → {locs_str}")
+            else:
+                result_parts.append(f"{rule_code} ({n}×): {desc}")
+        elif len(unique_items) <= 5:
+            # 2–5 unique descriptions: show each with its location
+            lines_out = [f"{rule_code} ({n}×):"]
+            for desc, loc in unique_items:
+                loc_str = f" → {loc}" if loc else ""
+                lines_out.append(f"  {desc}{loc_str}")
+            result_parts.append("\n".join(lines_out))
         else:
             # Many unique descriptions: show first 5 + count of rest
-            shown = " | ".join(unique_descs[:5])
-            rest = len(unique_descs) - 5
-            result_parts.append(
-                f"{rule_code} ({n}×): {shown} (+{rest} more — run ruff for full list)"
-            )
+            lines_out = [f"{rule_code} ({n}×):"]
+            for desc, loc in unique_items[:5]:
+                loc_str = f" → {loc}" if loc else ""
+                lines_out.append(f"  {desc}{loc_str}")
+            rest = len(unique_items) - 5
+            lines_out.append(f"  (+{rest} more — run ruff for full list)")
+            result_parts.append("\n".join(lines_out))
 
     if summary_line:
         result_parts.append(summary_line)
@@ -249,7 +271,7 @@ def filter_ruff(output: str, command: str, exit_code: int | None) -> str:
     return "\n".join(result_parts) if result_parts else output
 
 
-# ── ESLint ────────────────────────────────────────────────────────────────────
+# ── ESLint ───────────────────────────────────────────────────────────────────
 
 # /path/to/file.ts
 #   10:5  error  'foo' is defined but never used  no-unused-vars
@@ -264,6 +286,8 @@ def filter_eslint(output: str, command: str, exit_code: int | None) -> str:
     """Compress ESLint output.
 
     Groups by rule name, deduplicates, and counts occurrences.
+    Each occurrence preserves file:line so the model can fix every violation
+    without re-running ESLint.
     """
     if exit_code == 0:
         # Don't expand already-compact clean output
@@ -273,26 +297,36 @@ def filter_eslint(output: str, command: str, exit_code: int | None) -> str:
 
     lines = output.split("\n")
 
-    # rule_name → {"severity": str, "message": str, "count": int}
+    # rule_name → {severity, items: [(message, file_loc)], count}
+    # file_loc: "path/file.ts:10" or "" if not available
     rule_groups: dict[str, dict] = defaultdict(
-        lambda: {"severity": "", "message": "", "count": 0}
+        lambda: {"severity": "", "items": [], "count": 0}
     )
     summary_line = ""
+    current_file = ""
 
     for line in lines:
-        m_sum = _ESLINT_SUMMARY_RE.match(line)
-        if m_sum:
+        # Summary line: "✖ N problems"
+        if _ESLINT_SUMMARY_RE.match(line):
             summary_line = line.strip()
             continue
 
+        # Issue line (has leading whitespace): "  10:5  error  msg  rule-name"
         m = _ESLINT_ISSUE_RE.match(line)
         if m:
-            _lineno, _col, severity, message, rule_name = m.groups()
+            lineno, _col, severity, message, rule_name = m.groups()
             g = rule_groups[rule_name]
             if g["count"] == 0:
                 g["severity"] = severity
-                g["message"] = message.strip()
+            file_loc = f"{current_file}:{lineno}" if current_file else f"line {lineno}"
+            g["items"].append((message.strip(), file_loc))
             g["count"] += 1
+            continue
+
+        # File header: non-empty line with no leading whitespace (not summary)
+        stripped = line.strip()
+        if stripped and not line[0].isspace():
+            current_file = stripped
 
     result_parts: list[str] = []
     # Errors first, then warnings
@@ -303,12 +337,35 @@ def filter_eslint(output: str, command: str, exit_code: int | None) -> str:
             if data["severity"] != severity:
                 continue
             n = data["count"]
-            msg = data["message"]
+            items = data["items"]  # list of (message, file_loc)
             prefix = "✗" if severity == "error" else "⚠"
+
+            # Check how many unique messages we have
+            unique_msgs = list(dict.fromkeys(msg for msg, _ in items))
+
             if n == 1:
-                result_parts.append(f"{prefix} {rule_name}: {msg}")
+                msg, file_loc = items[0]
+                loc_str = f" ({file_loc})" if file_loc else ""
+                result_parts.append(f"{prefix} {rule_name}: {msg}{loc_str}")
+            elif len(unique_msgs) == 1:
+                # Same message, different files — show all locations
+                msg = unique_msgs[0]
+                locs = [loc for _, loc in items if loc][:5]
+                if locs:
+                    locs_str = ", ".join(locs)
+                    result_parts.append(
+                        f"{prefix} {rule_name} ({n}×): {msg} → {locs_str}"
+                    )
+                else:
+                    result_parts.append(f"{prefix} {rule_name}: {msg} ({n}×)")
             else:
-                result_parts.append(f"{prefix} {rule_name}: {msg} ({n}×)")
+                # Different messages per occurrence — show each with file:line
+                result_parts.append(f"{prefix} {rule_name} ({n}×):")
+                for msg, file_loc in items[:5]:
+                    loc_str = f" → {file_loc}" if file_loc else ""
+                    result_parts.append(f"  {msg}{loc_str}")
+                if n > 5:
+                    result_parts.append(f"  (+{n - 5} more)")
 
     if summary_line:
         result_parts.append(summary_line)

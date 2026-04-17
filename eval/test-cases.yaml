@@ -302,6 +302,79 @@ test_cases:
     max_acceptable_tool_calls: 2
     notes: "Strip TLS handshake noise, keep headers and response. ~44% savings."
 
+  # ── CONTINUATION TEST CASES ─────────────────────────────────────────────
+  # These verify the model can USE compressed output to fix issues WITHOUT
+  # re-running the tool. The key regression signal: if the model re-runs the
+  # same command to get more detail, the compression was too aggressive.
+
+  - id: ruff-fix-continuation
+    name: "ruff check and fix all errors (continuation)"
+    category: lint-continuation
+    filter: ruff
+    scenario: fix-after-compressed-output
+    prompt: "run ruff check on /tmp/lint_issues.py and fix all the errors. do not ask for clarification."
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: [ruff]
+    max_acceptable_tool_calls: 6
+    notes: |
+      Compressed output (71.9% savings): 9 violations, each with file:line.
+      Success criteria:
+        - Model sees compressed output and goes straight to fixing (no re-run)
+        - Model correctly identifies all 9 violations from compressed output
+        - Model edits /tmp/lint_issues.py to fix all violations
+        - Session A (with hook) uses same or fewer turns as Session B
+      Violations: F401 (4x, lines 3-6), F841 (2x, lines 11-12), E712 (2x, lines 15,17), E722 (line 26)
+
+  - id: pytest-fix-continuation
+    name: "pytest failures and fix all failing tests (continuation)"
+    category: test-continuation
+    filter: pytest
+    scenario: fix-after-compressed-output
+    prompt: "run pytest on /tmp/test_eval_fail.py -v and fix all the failing tests. do not ask for clarification."
+    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    expected_commands: [pytest]
+    max_acceptable_tool_calls: 6
+    notes: |
+      Compressed output (37.7% savings): 3 failures with full tracebacks + file:line.
+      Success criteria:
+        - Model sees tracebacks and goes straight to fixing (no re-run to see more detail)
+        - Model correctly identifies all 3 failing tests from compressed output
+        - Model fixes test_multiply_correct (:29), test_divide_basic (:33), test_add_large (:43)
+        - Session A (with hook) uses same or fewer turns as Session B
+      Note: 37% savings is intentionally conservative — failure details must be preserved.
+
+  - id: clippy-fix-continuation
+    name: "cargo clippy and fix all warnings (continuation)"
+    category: lint-continuation
+    filter: cargo-clippy
+    scenario: fix-after-compressed-output
+    prompt: "run cargo clippy in /tmp/test-rust-clippy and fix all the warnings. do not ask for clarification."
+    working_dir: /tmp/test-rust-clippy
+    expected_commands: ["cargo clippy"]
+    max_acceptable_tool_calls: 8
+    notes: |
+      Compressed output: warnings grouped by rule, each with file:line.
+      Success criteria:
+        - Model sees compressed clippy output with file:line for each warning
+        - Model fixes all warnings without needing to re-run clippy to find locations
+        - Each warning shows the specific variable/function name AND file:line
+
+  - id: build-errors-fix-continuation
+    name: "cargo build errors and fix (continuation)"
+    category: build-continuation
+    filter: cargo-build
+    scenario: fix-after-compressed-output
+    prompt: "run cargo build in /tmp/test-rust-errors and fix any compile errors. do not ask for clarification."
+    working_dir: /tmp/test-rust-errors
+    expected_commands: ["cargo build"]
+    max_acceptable_tool_calls: 8
+    notes: |
+      Compressed output (65% savings): error blocks with --> file:line:col preserved.
+      Success criteria:
+        - Model sees error[E...] blocks with file:line and fixes them directly
+        - cargo build filters already preserve full error context (no fix needed)
+        - This confirms build errors are already actionable from compressed output
+
 # ── PASS/FAIL CRITERIA ─────────────────────────────────────────────────────────
 # Applied by analyze_sessions.py when comparing A/B session pairs.
 

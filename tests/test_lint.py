@@ -317,3 +317,164 @@ class TestFilterRuffMultiDescription:
         assert "+3 more" in result, (
             f"Expected '+3 more' truncation notice in: {result!r}"
         )
+
+
+# ── Continuation tests: file:line preservation ────────────────────────────────
+# These verify the model can USE compressed output to fix issues without
+# re-running the linter. Every violation must include its file:line.
+
+
+class TestRuffFilelocationPreservation:
+    """Ruff: each occurrence of a grouped rule must show its file:line."""
+
+    def test_multi_occurrence_shows_file_locations(self):
+        """F401 (3×) must show file:line for EACH occurrence, not just the count.
+
+        Without file:line, the model can't navigate to fix each import.
+        """
+        output = (
+            "src/main.py:1:8: F401 [*] `os` imported but unused\n"
+            "src/main.py:2:8: F401 [*] `sys` imported but unused\n"
+            "src/main.py:3:8: F401 [*] `json` imported but unused\n"
+            "Found 3 errors.\n"
+        )
+        result = filter_ruff(output, "ruff check src/main.py", 1)
+        assert "src/main.py:1" in result, f"Missing src/main.py:1 in:\n{result}"
+        assert "src/main.py:2" in result, f"Missing src/main.py:2 in:\n{result}"
+        assert "src/main.py:3" in result, f"Missing src/main.py:3 in:\n{result}"
+
+    def test_same_desc_multi_occurrence_shows_all_locations(self):
+        """E501 (2×) with identical messages must show both file:line locations."""
+        output = (
+            "src/auth.py:45:9: E501 Line too long (120 > 88 characters)\n"
+            "src/utils.py:12:1: E501 Line too long (95 > 88 characters)\n"
+            "Found 2 errors.\n"
+        )
+        result = filter_ruff(output, "ruff check src/", 1)
+        # Both files must be mentioned so model knows where to fix
+        assert "src/auth.py" in result, f"Missing src/auth.py in:\n{result}"
+        assert "src/utils.py" in result, f"Missing src/utils.py in:\n{result}"
+
+    def test_full_format_multi_occurrence_shows_locations(self):
+        """Full format (ruff >= 0.4): F401 (2×) must show file:line for each."""
+        output = (
+            "F401 [*] `os` imported but unused\n"
+            " --> src/main.py:1:8\n"
+            "  |\n"
+            "1 | import os\n"
+            "  |\n"
+            "\n"
+            "F401 [*] `sys` imported but unused\n"
+            " --> src/main.py:2:8\n"
+            "  |\n"
+            "2 | import sys\n"
+            "  |\n"
+            "\n"
+            "Found 2 errors.\n"
+        )
+        result = filter_ruff(output, "ruff check src/main.py", 1)
+        assert "src/main.py:1" in result, f"Missing src/main.py:1 in:\n{result}"
+        assert "src/main.py:2" in result, f"Missing src/main.py:2 in:\n{result}"
+
+    def test_multi_file_violations_show_all_file_paths(self):
+        """Violations across multiple files must show each file's path."""
+        output = (
+            "src/auth.py:10:1: F401 [*] `os` imported but unused\n"
+            "src/utils.py:5:1: F401 [*] `sys` imported but unused\n"
+            "src/models.py:15:1: F401 [*] `json` imported but unused\n"
+            "Found 3 errors.\n"
+        )
+        result = filter_ruff(output, "ruff check src/", 1)
+        assert "src/auth.py" in result, f"Missing src/auth.py in:\n{result}"
+        assert "src/utils.py" in result, f"Missing src/utils.py in:\n{result}"
+        assert "src/models.py" in result, f"Missing src/models.py in:\n{result}"
+
+
+class TestClippyFilelocationPreservation:
+    """Clippy: each occurrence of a grouped rule must show its file:line."""
+
+    def test_same_rule_different_vars_shows_all_descriptions_and_locations(self):
+        """unused_variables with 'x' and 'y' must show both names AND locations.
+
+        Before the fix, only 'x' was shown (first description stored).
+        The model needs to know about 'y' AND where to find it.
+        """
+        output = (
+            "warning[unused_variables]: unused variable: `x`\n"
+            "  --> src/main.rs:10:9\n"
+            "   |\n"
+            "10 |     let x = 5;\n"
+            "   |         ^ help: if this is intentional, prefix it with an underscore: `_x`\n"
+            "\n"
+            "warning[unused_variables]: unused variable: `y`\n"
+            "  --> src/lib.rs:25:9\n"
+            "   |\n"
+            "25 |     let y = get_value();\n"
+            "   |         ^ help: if this is intentional, prefix it with an underscore: `_y`\n"
+        )
+        result = filter_cargo_clippy(output, "cargo clippy", 0)
+        # Both variable names must appear
+        assert "`x`" in result, f"Missing `x` in:\n{result}"
+        assert "`y`" in result, f"Missing `y` in:\n{result}"
+        # Both file:line locations must appear so model can navigate
+        assert "main.rs" in result, f"Missing main.rs in:\n{result}"
+        assert "lib.rs" in result, f"Missing lib.rs in:\n{result}"
+
+    def test_dead_code_warnings_each_show_location(self):
+        """Each dead_code warning must show its --> src:line location."""
+        output = (
+            "warning: function `add` is never used\n"
+            " --> src/main.rs:1:4\n"
+            "warning: function `multiply` is never used\n"
+            " --> src/main.rs:5:4\n"
+            'warning: `myproject` (bin "myproject") generated 2 warnings\n'
+        )
+        result = filter_cargo_clippy(output, "cargo clippy", 0)
+        # Both functions visible
+        assert "add" in result, f"Missing 'add' in:\n{result}"
+        assert "multiply" in result, f"Missing 'multiply' in:\n{result}"
+        # Locations preserved (both reference src/main.rs)
+        assert "src/main.rs" in result, f"Missing src/main.rs in:\n{result}"
+
+
+class TestEslintFilelocationPreservation:
+    """ESLint: file:line must be preserved for each occurrence of grouped rules."""
+
+    ISSUES_OUTPUT = (
+        "/home/user/src/auth.ts\n"
+        "  10:5  error  'unused' is defined but never used  no-unused-vars\n"
+        "  24:1  warning  Unexpected var, use let or const  no-var\n"
+        "\n"
+        "/home/user/src/utils.ts\n"
+        "  5:9   error  'unused2' is defined but never used  no-unused-vars\n"
+        "  18:1  warning  Unexpected var, use let or const  no-var\n"
+        "\n"
+        "/home/user/src/models.ts\n"
+        "  33:3  error  'unused3' is defined but never used  no-unused-vars\n"
+        "\n"
+        "✖ 5 problems (3 errors, 2 warnings)\n"
+    )
+
+    def test_shows_file_path_for_each_occurrence(self):
+        """no-unused-vars (3×) must show a file path for each occurrence."""
+        result = filter_eslint(self.ISSUES_OUTPUT, "eslint src/", 1)
+        # All 3 source files must appear in output
+        assert "auth.ts" in result, f"Missing auth.ts in:\n{result}"
+        assert "utils.ts" in result, f"Missing utils.ts in:\n{result}"
+        assert "models.ts" in result, f"Missing models.ts in:\n{result}"
+
+    def test_shows_line_numbers_for_each_occurrence(self):
+        """Line numbers must be preserved so model can navigate to each issue."""
+        result = filter_eslint(self.ISSUES_OUTPUT, "eslint src/", 1)
+        # Line numbers from each file
+        assert ":10" in result, f"Missing :10 (auth.ts line 10) in:\n{result}"
+        assert ":5" in result, f"Missing :5 (utils.ts line 5) in:\n{result}"
+        assert ":33" in result, f"Missing :33 (models.ts line 33) in:\n{result}"
+
+    def test_same_message_rule_shows_all_locations(self):
+        """no-var (same message, 2 files) must show both file:line locations."""
+        result = filter_eslint(self.ISSUES_OUTPUT, "eslint src/", 1)
+        # no-var appears in auth.ts:24 and utils.ts:18 — both must be shown
+        # (at minimum, both files must appear somewhere in the output)
+        assert "auth.ts" in result, f"Missing auth.ts for no-var in:\n{result}"
+        assert "utils.ts" in result, f"Missing utils.ts for no-var in:\n{result}"
