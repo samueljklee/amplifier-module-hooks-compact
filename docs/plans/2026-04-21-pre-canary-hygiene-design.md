@@ -39,7 +39,7 @@ Before that rollout, two independent reviews (foundation-expert and crusty-old-e
 
 ## Approach
 
-**Three-category triage** (Blocker / Required / Nice-to-have), **four-phase execution** (docs-only → code+tests → eval+DTU → tag creation + verification), with **PR staging after two gating DTU passes** so Brian and Salil see the work mid-stream. Pinning (`@main` → `@v0.1.0-canary.1`) is done in Phase A; tag creation happens in Phase C.0 before DTU gates run.
+**Three-category triage** (Blocker / Required / Nice-to-have), **four-phase execution** (docs-only → code+tests → eval+DTU → tag creation + verification), with **PR staging after two gating DTU passes** so Brian and Salil see the work mid-stream. Pinning (`@main` → `@v0.1.0-canary.1`) is done in Phase A; tag creation happens in Pre-Gate Phases (C.0a, C.0b) before DTU gates run.
 
 ---
 
@@ -193,9 +193,18 @@ Hook reads only `result.output.stdout` (`hook.py:253-276`). Commands writing pri
      deterministic across runs).
   2. Raw file bytes of any loaded user/project `output-filters.yaml` (hashed
      as-is; no YAML normalization — if bytes change, hash changes).
+     - **Absence case:** If no `output-filters.yaml` exists (common case —
+       most teammates won't have custom filters), component 2 is the empty
+       string `""`. This means:
+       - Any later addition of the file (even empty or comment-only) changes
+         the hash — which is correct, because the hook may now consult the
+         file at startup.
+       - A session with a default config and no override file has a
+         deterministic, reproducible hash across teammates.
   3. Current `_VERSION` string.
-- Concatenation order: config + YAML bytes + version. Separator: `\n---\n`
-  between sections (so accidental overlap between sections cannot collide).
+- Concatenation order: config + YAML bytes (or empty string) + version.
+  Separator: `\n---\n` between sections (so accidental overlap between
+  sections cannot collide).
 - Computed once at mount time; same hash on all rows in a session
 - Edge case: if user edits `output-filters.yaml` mid-session, hash becomes stale — acceptable with documented "restart to pick up filter changes" note
 
@@ -237,7 +246,29 @@ Hook reads only `result.output.stdout` (`hook.py:253-276`). Commands writing pri
 - **Strict privacy:** no paths, args, hostnames, or user identifiers
 - Output pastable in channel
 
-### Phase C.0 — Tag Creation (Pre-Gate)
+### Phase C.0a — DTU Codification Audit (Pre-Gate)
+
+Before Phase C.1 gate #1 (all-30 baseline A/B) can run, the 10 simulation-only
+scenarios must be codified as runnable DTU profiles. Compare `eval/test-cases.yaml`
+(30 scenarios total) against the existing `eval/profiles/` directory; for any
+scenario without a DTU profile, author one following the existing profile
+template.
+
+**Fallback if codification is not feasible within the hygiene pass scope:**
+Scope Pass #1 to the 20 already-codified scenarios (matches 2026-04-17 baseline
+exactly) and document in the README that 10 scenarios remain simulation-only.
+Note: this fallback means the 10 uncodified scenarios will not gain DTU evidence
+during the canary and must be addressed in v0.1.1 or later.
+
+**Decision point:** The implementer chooses codification vs fallback based on
+codification complexity. Document the decision in Commit 3's message.
+
+### Phase C.0b — Tag Creation (Pre-Gate)
+
+> **Ordering:** Phase C.0a must complete before Phase C.0b. The codification
+> audit may modify Commit 3 (adding DTU profiles or documenting the fallback
+> decision in the commit message); the tag in Phase C.0b must point to the
+> final Commit 3 HEAD, which means C.0a decisions must be resolved first.
 
 Before Phase C.1 gates can run, the annotated tag must exist because Pass #4
 resolves it. Create the tag on the feature branch HEAD (which at this point
@@ -258,23 +289,6 @@ tag's commit ends up reachable from `main`. Squash-merge will leave the
 tag pointing to an orphaned commit (still valid for `amplifier bundle add`
 via the tag, but cosmetically detached from main history).
 
-### Phase C.0a — DTU Codification Audit (Pre-Gate)
-
-Before Phase C.1 gate #1 (all-30 baseline A/B) can run, the 10 simulation-only
-scenarios must be codified as runnable DTU profiles. Compare `eval/test-cases.yaml`
-(30 scenarios total) against the existing `eval/profiles/` directory; for any
-scenario without a DTU profile, author one following the existing profile
-template.
-
-**Fallback if codification is not feasible within the hygiene pass scope:**
-Scope Pass #1 to the 20 already-codified scenarios (matches 2026-04-17 baseline
-exactly) and document in the README that 10 scenarios remain simulation-only.
-Note: this fallback means the 10 uncodified scenarios will not gain DTU evidence
-during the canary and must be addressed in v0.1.1 or later.
-
-**Decision point:** The implementer chooses codification vs fallback based on
-codification complexity. Document the decision in Commit 3's message.
-
 ---
 
 ## Section 3 — Execution Phases and Commit Structure
@@ -286,8 +300,8 @@ Commit 1 — docs: pre-canary hygiene fixes
   All Phase A items (README/bundle.md/behaviors drift, rm stale docs/plans,
   rm hooks-compact-story.html, stdout blind-spot disclosure, .gitignore updates).
   Note: URI pinning (@main → @v0.1.0-canary.1) happens here; the tag itself
-  is created later in Phase C.0 on Commit 3's HEAD. This is safe because no
-  consumer clones from the tag until after Phase C.0 runs.
+  is created later in Phase C.0b on Commit 3's HEAD. This is safe because no
+  consumer clones from the tag until after Phase C.0b runs.
 
 Commit 2 — fix: telemetry completion + mount unregister + version SSoT
   All Phase B items (session_id, mount unregister, importlib.metadata,
@@ -300,8 +314,10 @@ Commit 3 — eval: make harness runnable + honest simulation + team report scrip
   scripts/team-report.sh)
 
 Commit 4 — eval: post-hygiene DTU baseline report
-  eval/results/dtu-ab-test-report-<date>.md (new 30-scenario run from
-  DTU pass #1). README.md top-line claim updated to reference the new report.
+  eval/results/dtu-ab-test-report-<date>.md (new run from DTU pass #1 —
+  30 scenarios if Phase C.0a completed full codification; 20 scenarios
+  if Phase C.0a fallback was taken). README.md top-line claim updated to
+  reference the new report.
 ```
 
 ### Recovery Protocol
@@ -336,8 +352,9 @@ history on a single branch to preserve reviewer context.
 - `./eval/bootstrap.sh && ./eval/run-eval.sh --all` completes inside fresh DTU container with no workstation paths
 - `simulate_all_filters.py` output shows stderr-heavy commands at ~0% savings
 
-**Phase C.0 (Tag Creation — Pre-Gate):**
-- `v0.1.0-canary.1` annotated tag created on feature branch HEAD and pushed
+**Pre-Gate Phases (C.0a, C.0b):**
+- **C.0a:** Codification audit complete — either all 30 scenarios have DTU profiles, or fallback to 20 is documented in Commit 3's message
+- **C.0b:** `v0.1.0-canary.1` annotated tag created on feature branch HEAD and pushed
 - Tag resolves via `git show v0.1.0-canary.1` (prerequisite for Pass #4)
 - All `@main` refs already replaced with `@v0.1.0-canary.1` in Commit 1
 
@@ -394,7 +411,14 @@ git push origin v0.1.0-canary.1
 | 9 | **Volume** | 100 bash calls in single session; no hook crash; hook processing p95 < 20ms per bash call (measured via timing harness in the DTU test); all 100 rows present in `compression_log`; no sqlite lock contention errors in logs | `fast` |
 | 10 | **Stderr pass-through honesty** | `cargo build`, `cargo clippy`, `curl -v`; `compressed_chars == original_chars` (exactly equal; no mutation); `passthrough` outcome logged (not `compressed`) | `fast` |
 | 11 | **team-report.sh output** | Run against populated DB; valid markdown, no paths/args/hostnames leaked, percentages sum cleanly | `fast` |
-| 12 | **Non-bash tool:post** | Invoke `grep` or `read_file`; hook fast-exits before telemetry; verify `compression_log` contains **zero rows** for the session where the tool was not bash. Confirmed via `SELECT COUNT(*) FROM compression_log WHERE session_id = ? AND command NOT LIKE 'bash%'` returning 0. | `fast` |
+| 12 | **Non-bash tool:post** | Run a dedicated test session that invokes ONLY non-bash tools (e.g., `grep` and `read_file` — no bash calls). Verify `SELECT COUNT(*) FROM compression_log WHERE session_id = ?` returns `0`. The hook fast-exits at the `classify` step before reaching any telemetry write, so non-bash events must leave zero footprint. | `fast` |
+
+> **On Pass #12 semantics:** Because `command` stores the first token only
+> (privacy constraint in telemetry.py), "bash" never appears in the column —
+> the actual bash invocation is stored as `git`, `npm`, `cargo`, etc. The
+> correct invariant for non-bash tools is "zero rows in the session", not
+> "command NOT LIKE 'bash%'". This is why the test session must be scoped to
+> non-bash tools only.
 
 ---
 
@@ -444,7 +468,7 @@ Starts as soon as C.2 is green. Does not block merge. Decorates PR with addition
 ### Merge → Verify
 
 1. All Phase C.2 passes green + PR approved → merge (prefer rebase-merge
-   or merge-commit; see Phase C.0 note on squash-merge).
+   or merge-commit; see Phase C.0b note on squash-merge).
 2. Verify the tag `v0.1.0-canary.1` is still valid post-merge:
    `git show v0.1.0-canary.1` succeeds.
 3. Verify source URIs resolve end-to-end from a fresh shell (see
@@ -467,9 +491,14 @@ Before telling Brian and Salil "opt in":
 
 ## Stop/Rollback Conditions
 
-- **Any heavy DTU pass FAIL with net-new regression vs baseline** → freeze, root-cause first, no tag
-- **Phase C.2 check failure** → fix before merge
-- **Phase C.3 check soft-flag** → document, proceed with note in PR
+- **Gate pass failure (#1 or #4) with net-new regression vs baseline** → freeze; if the tag was pushed pre-gate, delete it from origin before fixing:
+  ```bash
+  git push --delete origin v0.1.0-canary.1
+  git tag -d v0.1.0-canary.1
+  ```
+  Fix the regression, amend Commit 3 (or add a fixup commit), re-create the tag on the new HEAD, re-push, re-run gates.
+- **Phase C.2 merge-blocker check failure** → fix before merge; tag remains in place; amend the relevant commit per Recovery Protocol.
+- **Phase C.3 parallel-validation soft-flag** → document in PR comment; proceed with note; no tag action needed.
 
 ---
 
