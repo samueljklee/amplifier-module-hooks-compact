@@ -11,16 +11,20 @@ from __future__ import annotations
 __amplifier_module_type__ = "hook"
 
 import logging
-import uuid
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _MODULE_NAME = "hooks-compact"
-_VERSION = "0.1.0"
+
+try:
+    _VERSION = _pkg_version("amplifier-module-hooks-compact")
+except PackageNotFoundError:
+    _VERSION = "unknown"
 
 
-async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> None:
+async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> Any:
     """Mount the hooks-compact module.
 
     Registers a tool:post handler that compresses bash tool output
@@ -31,7 +35,7 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> None:
         config: Optional configuration dict. See design doc for full schema.
 
     Returns:
-        None (contract: return None or a cleanup callable — never a dict).
+        Unregister callable from hooks.register(), or None if disabled.
     """
     config = config or {}
 
@@ -40,10 +44,33 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> None:
         return None
 
     from .hook import CompactHook
+    from .telemetry import compute_config_hash
 
-    session_id = str(uuid.uuid4())
+    session_id = coordinator.session_id
     hook = CompactHook(config, session_id=session_id)
-    coordinator.hooks.register(
+
+    # Compute config fingerprint once for the session
+    yaml_bytes = ""
+    try:
+        from pathlib import Path
+
+        for candidate in [
+            Path.cwd() / ".amplifier" / "output-filters.yaml",
+            Path.home() / ".amplifier" / "output-filters.yaml",
+        ]:
+            if candidate.exists():
+                yaml_bytes = candidate.read_text()
+                break
+    except Exception:
+        yaml_bytes = ""
+
+    hook._config_hash = compute_config_hash(
+        config=config,
+        yaml_bytes=yaml_bytes,
+        version=_VERSION,
+    )
+
+    unregister = coordinator.hooks.register(
         "tool:post",
         hook.on_tool_post,
         priority=50,
@@ -51,4 +78,4 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> None:
     )
 
     logger.info(f"Mounted {_MODULE_NAME} v{_VERSION} (session={session_id[:8]})")
-    return None
+    return unregister

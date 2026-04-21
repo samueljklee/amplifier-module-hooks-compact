@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 from typing import Any
 
 import pytest
@@ -264,3 +265,169 @@ class TestFailSafe:
         }
         result = await hook.on_tool_post("tool:post", data)
         assert result.action == "continue"
+
+
+# ── Filter exception passthrough (R9) ────────────────────────────────────────
+
+
+class TestFilterExceptionPassthrough:
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_filter_exception_triggers_passthrough(self, tmp_path):
+        """A filter that raises RuntimeError must not crash the hook.
+
+        The hook should return action='continue' (passthrough) and log
+        a telemetry row with outcome='filter_error'.
+        """
+        db = tmp_path / "telemetry.db"
+        hook = CompactHook(
+            {
+                "min_lines": 5,
+                "show_savings": False,
+                "debug": False,
+                "telemetry": {"local": True, "db_path": str(db)},
+            },
+            session_id="err-session",
+        )
+
+        # Monkey-patch: register a filter that always raises
+        def _exploding_filter(output, command, exit_code):
+            raise RuntimeError("boom")
+
+        hook._registry._python_filters.insert(
+            0,
+            (
+                "exploding",
+                __import__("re").compile(r"^git\s+status\b"),
+                _exploding_filter,
+            ),
+        )
+
+        long_output = "\n".join([f"line {i}" for i in range(30)])
+        data = make_bash_event("git status", long_output)
+        result = await hook.on_tool_post("tool:post", data)
+
+        # Fail-safe: hook returns continue, user sees original output unchanged
+        assert result.action == "continue"
+
+        # Telemetry: a row with outcome='filter_error' was logged
+        with sqlite3.connect(db) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM compression_log").fetchall()
+        assert len(rows) == 1
+        assert rows[0]["outcome"] == "filter_error"
+
+
+# ── Outcome logging ───────────────────────────────────────────────────────────
+
+
+class TestOutcomeLogging:
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_compressed_outcome(self, tmp_path):
+        """A successful compression logs outcome='compressed'."""
+        db = tmp_path / "telemetry.db"
+        hook = CompactHook(
+            {
+                "min_lines": 5,
+                "show_savings": False,
+                "debug": False,
+                "telemetry": {"local": True, "db_path": str(db)},
+            },
+            session_id="compressed-session",
+        )
+
+        fixture = (FIXTURES / "cargo_test_all_pass.txt").read_text()
+        data = make_bash_event("cargo test", fixture, returncode=0, success=True)
+        result = await hook.on_tool_post("tool:post", data)
+        assert result.action == "modify"
+
+        with sqlite3.connect(db) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM compression_log").fetchall()
+        assert len(rows) == 1
+        assert rows[0]["outcome"] == "compressed"
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_no_match_outcome(self, tmp_path):
+        """A bash command with no matching filter logs outcome='no_match'."""
+        db = tmp_path / "telemetry.db"
+        hook = CompactHook(
+            {
+                "min_lines": 5,
+                "show_savings": False,
+                "debug": False,
+                "telemetry": {"local": True, "db_path": str(db)},
+            },
+            session_id="nomatch-session",
+        )
+
+        long_output = "\n".join([f"line {i}" for i in range(30)])
+        data = make_bash_event("some_unknown_command --flags", long_output)
+        result = await hook.on_tool_post("tool:post", data)
+        assert result.action == "continue"
+
+        with sqlite3.connect(db) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM compression_log").fetchall()
+        assert len(rows) == 1
+        assert rows[0]["outcome"] == "no_match"
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_passthrough_outcome(self, tmp_path):
+        """A filter that returns the same output logs outcome='passthrough'."""
+        db = tmp_path / "telemetry.db"
+        hook = CompactHook(
+            {
+                "min_lines": 5,
+                "show_savings": False,
+                "debug": False,
+                "telemetry": {"local": True, "db_path": str(db)},
+            },
+            session_id="passthrough-session",
+        )
+
+        # Register an identity filter that returns input unchanged
+        def _identity_filter(output, command, exit_code):
+            return output
+
+        hook._registry._python_filters.insert(
+            0, ("identity", __import__("re").compile(r"^echo\b"), _identity_filter)
+        )
+
+        long_output = "\n".join([f"line {i}" for i in range(30)])
+        data = make_bash_event("echo hello", long_output)
+        result = await hook.on_tool_post("tool:post", data)
+        assert result.action == "continue"
+
+        with sqlite3.connect(db) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM compression_log").fetchall()
+        assert len(rows) == 1
+        assert rows[0]["outcome"] == "passthrough"
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_non_bash_tool_logs_nothing(self, tmp_path):
+        """Non-bash tools must not create any telemetry row."""
+        db = tmp_path / "telemetry.db"
+        hook = CompactHook(
+            {
+                "min_lines": 5,
+                "show_savings": False,
+                "debug": False,
+                "telemetry": {"local": True, "db_path": str(db)},
+            },
+            session_id="nonbash-session",
+        )
+
+        data = {
+            "tool_name": "read_file",
+            "result": {
+                "output": {"returncode": 0, "stdout": "file contents\n" * 30},
+                "success": True,
+            },
+        }
+        result = await hook.on_tool_post("tool:post", data)
+        assert result.action == "continue"
+
+        with sqlite3.connect(db) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM compression_log").fetchone()[0]
+        assert count == 0
