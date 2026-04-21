@@ -18,14 +18,14 @@ Inspired by [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk).
 Add to your app bundle:
 
 ```
-amplifier bundle add git+https://github.com/samueljklee/amplifier-module-hooks-compact@main --app
+amplifier bundle add git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1 --app
 ```
 
 Or include just the behavior in your bundle YAML:
 
 ```yaml
 includes:
-  - bundle: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main#subdirectory=behaviors/compact.yaml
+  - bundle: git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1#subdirectory=behaviors/compact.yaml
 ```
 
 ## Configuration
@@ -33,10 +33,10 @@ includes:
 ```yaml
 hooks:
   - module: hooks-compact
-    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main
+    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1
     config:
       enabled: true        # set false to disable entirely
-      min_lines: 20        # skip compression for short output
+      min_lines: 5         # skip compression for short output
       strip_ansi: true     # strip color codes before filtering
       show_savings: true   # show "compressed: X → Y chars (Z%)" message
       debug: false         # show before/after comparison (development only)

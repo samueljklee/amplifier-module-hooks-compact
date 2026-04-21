@@ -9,7 +9,12 @@ dist/
 .ruff_cache/
 .amplifier/
 telemetry.db
-docs/
+# Stale design docs removed in pre-canary hygiene (R4)
+docs/plans/2026-04-15-hooks-compact-design.md
+docs/plans/2026-04-15-hooks-compact-implementation.md
+
+# Stale sales material removed in pre-canary hygiene (R5)
+docs/*.html
 *.db
 .DS_Store
 eval/results/

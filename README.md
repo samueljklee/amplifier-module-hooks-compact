@@ -1,23 +1,23 @@
 # hooks-compact
 
-An [Amplifier](https://github.com/microsoft/amplifier) hook module that compresses bash tool output by 60–96% before it enters the LLM context window. Across all 20 DTU-tested scenarios (isolated container A/B testing), hooks-compact delivers **37% stdout reduction** (12,057 vs 19,153 chars) and **11% fewer turns** (112 vs 126), with 0 regressions — compression never caused model retries. 7/20 scenarios used fewer turns, 11/20 used equal turns, and the 2 initial regressions were fixed to 0/20.
+An [Amplifier](https://github.com/microsoft/amplifier) hook module that compresses bash tool output by 60–96% before it enters the LLM context window. Across 20 DTU-tested scenarios (isolated container A/B testing), hooks-compact delivers **37% stdout reduction** (12,057 vs 19,153 chars) and **11% fewer turns** (112 vs 126) — **16 PASS**, **2 MARGINAL** (different model strategies, not compression-caused), **2 FAIL** (eslint: 15 vs 9 turns — under investigation). Full report: [`eval/results/dtu-ab-test-report-2026-04-17.md`](eval/results/dtu-ab-test-report-2026-04-17.md).
 
 ## Quick Start
 
 One command to add hooks-compact to your app bundle:
 
 ```bash
-amplifier bundle add git+https://github.com/samueljklee/amplifier-module-hooks-compact@main#subdirectory=behaviors/compact.yaml --app
+amplifier bundle add git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1#subdirectory=behaviors/compact.yaml --app
 ```
 
-That's it. All bash output is now compressed automatically.
+That's it. Bash stdout is compressed automatically. Commands writing primarily to stderr (`cargo build`, `cargo clippy`, `curl -v`) pass through unchanged — known limitation tracked as v0.2.0 follow-up.
 
 **Alternative** — direct hook reference in your bundle YAML (for customizing config):
 
 ```yaml
 hooks:
   - module: hooks-compact
-    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main
+    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1
     config:
       enabled: true
       min_lines: 5
@@ -53,7 +53,7 @@ All numbers are DTU A/B verified (isolated container testing, with-hook vs witho
 
 | Command | Strategy | Success/Clean Savings | Failure/Error Savings | Notes |
 |---------|----------|----------------------|----------------------|-------|
-| `git status` | Branch + file groups, strip hints, cap lists at 10 | **68%** ✓ | — | DTU verified |
+| `git status` | Branch + file groups, strip hints, cap at 50 | **68%** ✓ | — | DTU verified |
 | `git diff` | Diffstat + first 8 changed lines per file (≤5 files) | **71%** ✓ | **71%** ✓ | DTU verified |
 | `git log` | One-line-per-commit format | ~0% | — | Already compact |
 | `git push` | Compact ref on success; preserve errors on failure | **93%** ✓ | **14%** (correct) | Errors always preserved |
@@ -66,9 +66,9 @@ All numbers are DTU A/B verified (isolated container testing, with-hook vs witho
 | `cargo build` | `"ok"` on success; errors + warning locations on failure | **41%** ✓ | **65%** ✓ | DTU verified |
 | `tsc` | Error-only; `"ok"` on clean; count summary on failure | 0% | ~-7% | Adds count summary |
 | `npm run build` | `"ok"` on success; error lines on failure | **80%** ✓ | — | DTU verified |
-| `cargo clippy` | Each warning listed with file:line; all shown (no cap) | **74%** ✓ | — | No occurrence cap |
-| `ruff check` | Group-by-rule; all violations with file:line; no occurrence cap | 0% (already short) | **76%** ✓ | DTU verified |
-| `eslint` | Group-by-rule; all violations with file:line; no occurrence cap | 0% | **78%** ✓ | Fixed from 15→1 turn regression |
+| `cargo clippy` | Each warning listed with file:line; cap at 50 per rule (safety valve) | **74%** ✓ | — | Cap at 50 per rule |
+| `ruff check` | Group-by-rule; all violations with file:line; cap at 50 per rule (safety valve) | 0% (already short) | **76%** ✓ | DTU verified |
+| `eslint` | Group-by-rule; all violations with file:line; cap at 50 per rule (safety valve) | 0% | **78%** ✓ | ❌ FAIL: 15 vs 9 turns (under investigation) |
 
 ### YAML Filters (declarative, regex pipelines)
 
@@ -109,7 +109,7 @@ Tool runner prefixes are automatically stripped before matching, so all patterns
 ```yaml
 hooks:
   - module: hooks-compact
-    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main
+    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1
     config:
       enabled: true           # set false to disable entirely
       min_lines: 5            # skip compression for output under N lines
@@ -202,7 +202,7 @@ sqlite3 ~/.amplifier/hooks-compact/telemetry.db \
 
 ## Eval & Regression Testing
 
-The `eval/` directory contains a regression harness to verify compression doesn't hurt model performance. Includes **26 test cases** covering all filter categories:
+The `eval/` directory contains a regression harness to verify compression doesn't hurt model performance. Includes **30 eval scenarios** (20 DTU A/B verified, 10 simulation-only) covering all filter categories:
 
 ```bash
 # Run all test cases (A/B with and without the hook)

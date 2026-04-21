@@ -5,13 +5,13 @@ bundle:
 
 hooks:
   - module: hooks-compact
-    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main
+    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1
     config:
       enabled: true
       min_lines: 5
       strip_ansi: true
       show_savings: true
-      debug: true
+      debug: false
       telemetry:
         local: true
         remote: false
