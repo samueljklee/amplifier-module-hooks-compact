@@ -41,9 +41,10 @@ header() { echo ""; echo "━━━ $* ━━━"; }
 # Map a local working_dir to its equivalent inside the DTU container
 container_path() {
   local local_path="$1"
-  # Local hooks-compact repo → /root/hooks-compact in container
+  # Local hooks-compact repo → /root/hooks-compact in container, preserving subpath
   if [[ "$local_path" == *"/amplifier-module-hooks-compact"* ]]; then
-    echo "/root/hooks-compact"
+    local suffix="${local_path#*amplifier-module-hooks-compact}"
+    echo "/root/hooks-compact${suffix}"
   else
     # /tmp/* stays as-is
     echo "$local_path"
@@ -55,7 +56,7 @@ list_container_sessions() {
   local dtu_id="$1"
   local project_path="$2"  # path inside container
   local project_slug="${project_path//\//-}"
-  amplifier-digital-twin exec "$dtu_id" -- \
+  amplifier-digital-twin exec "$dtu_id" -- bash -c \
     "ls /root/.amplifier/projects/${project_slug}/sessions/ 2>/dev/null | sort" \
     2>/dev/null | python3 -c "
 import sys, json
@@ -135,8 +136,8 @@ run_test_case() {
   local before_a
   before_a=$(list_container_sessions "$DTU_A_ID" "$c_path")
 
-  amplifier-digital-twin exec --stream "$DTU_A_ID" -- \
-    "cd $c_path && amplifier run --mode chat '$prompt'" \
+  amplifier-digital-twin exec "$DTU_A_ID" -- bash -c \
+    "export PATH=/root/.local/bin:\$PATH && cd $c_path && amplifier run '$prompt'" \
     || true
 
   local session_a
@@ -156,8 +157,8 @@ run_test_case() {
   local before_b
   before_b=$(list_container_sessions "$DTU_B_ID" "$c_path")
 
-  amplifier-digital-twin exec --stream "$DTU_B_ID" -- \
-    "cd $c_path && amplifier run --mode chat '$prompt'" \
+  amplifier-digital-twin exec "$DTU_B_ID" -- bash -c \
+    "export PATH=/root/.local/bin:\$PATH && cd $c_path && amplifier run '$prompt'" \
     || true
 
   local session_b
@@ -178,16 +179,17 @@ run_test_case() {
   local b_dir="$RESULTS_DIR/${test_id}_session_b"
   mkdir -p "$a_dir" "$b_dir"
 
-  amplifier-digital-twin file-pull "$DTU_A_ID" \
-    "${sessions_base}/${session_a}/" "$a_dir/" 2>/dev/null || true
-  amplifier-digital-twin file-pull "$DTU_B_ID" \
-    "${sessions_base}/${session_b}/" "$b_dir/" 2>/dev/null || true
+  for f in events.jsonl metadata.json transcript.jsonl; do
+    incus file pull "${DTU_A_ID}${sessions_base}/${session_a}/$f" "$a_dir/$f" 2>/dev/null || true
+  done
+  for f in events.jsonl metadata.json transcript.jsonl; do
+    incus file pull "${DTU_B_ID}${sessions_base}/${session_b}/$f" "$b_dir/$f" 2>/dev/null || true
+  done
 
   # ── Pull telemetry from Container A ──────────────────────────────────────
   local tel_dir="$RESULTS_DIR/${test_id}_telemetry"
   mkdir -p "$tel_dir"
-  amplifier-digital-twin file-pull "$DTU_A_ID" \
-    "/root/.amplifier/hooks-compact/telemetry.db" "$tel_dir/telemetry.db" 2>/dev/null || true
+  incus file pull "${DTU_A_ID}/root/.amplifier/hooks-compact/telemetry.db" "$tel_dir/telemetry.db" 2>/dev/null || true
 
   local tel_db="$tel_dir/telemetry.db"
   [ -f "$tel_db" ] || tel_db="$TELEMETRY_DB"

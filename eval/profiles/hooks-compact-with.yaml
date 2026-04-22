@@ -60,7 +60,7 @@ provision:
     # --- Amplifier configuration: provider + hooks-compact in bundle.app --
     - |
       mkdir -p /root/.amplifier
-      cat > /root/.amplifier/settings.yaml << 'YAMLEOF'
+      cat > /root/.amplifier/settings.yaml << YAMLEOF
       config:
         providers:
           - module: provider-anthropic
