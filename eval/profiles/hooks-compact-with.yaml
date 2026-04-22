@@ -60,7 +60,7 @@ provision:
     # --- Amplifier configuration: provider + hooks-compact in bundle.app --
     - |
       mkdir -p /root/.amplifier
-      cat > /root/.amplifier/settings.yaml << 'YAMLEOF'
+      cat > /root/.amplifier/settings.yaml << YAMLEOF
       config:
         providers:
           - module: provider-anthropic
@@ -69,9 +69,9 @@ provision:
               api_key: $ANTHROPIC_API_KEY
       bundle:
         added:
-          behavior-compact: git+https://github.com/samueljklee/amplifier-module-hooks-compact@main#subdirectory=behaviors/compact.yaml
+          behavior-compact: git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1#subdirectory=behaviors/compact.yaml
         app:
-          - git+https://github.com/samueljklee/amplifier-module-hooks-compact@main#subdirectory=behaviors/compact.yaml
+          - git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1#subdirectory=behaviors/compact.yaml
       YAMLEOF
 
     # --- Workspace scaffolding --------------------------------------------

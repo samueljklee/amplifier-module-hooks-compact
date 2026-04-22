@@ -463,7 +463,7 @@ def main() -> int:
         print("  " + "─" * 64)
         for r in tel_a:
             print(
-                f"  {r['command'][:18]:<18} {r['filter_used']:<18} "
+                f"  {r['command'][:18]:<18} {(r['filter_used'] or 'none'):<18} "
                 f"{r['input_chars']:>8,} {r['output_chars']:>8,} {r['savings_pct']:>7.1f}%"
             )
         total_in = sum(r["input_chars"] for r in tel_a)

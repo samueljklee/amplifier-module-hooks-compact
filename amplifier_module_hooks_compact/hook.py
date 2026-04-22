@@ -62,6 +62,7 @@ class CompactHook:
         self.show_savings: bool = config.get("show_savings", True)
         self.debug: bool = config.get("debug", False)
         self._session_id: str = session_id or "unknown"
+        self._config_hash: str | None = None
 
         # Telemetry (optional)
         self._telemetry = None
@@ -273,16 +274,44 @@ class CompactHook:
         )
 
         if not output or not isinstance(output, str):
+            # Bash event but no usable output — log no_match and exit
+            self._log_outcome(
+                command=command,
+                filter_used=None,
+                input_chars=0,
+                output_chars=0,
+                savings_pct=0.0,
+                exit_code=exit_code,
+                outcome="no_match",
+            )
             return _CONTINUE
 
         # Min-lines threshold
         line_count = output.count("\n") + 1
         if line_count < self.min_lines:
+            self._log_outcome(
+                command=command,
+                filter_used=None,
+                input_chars=len(output),
+                output_chars=len(output),
+                savings_pct=0.0,
+                exit_code=exit_code,
+                outcome="no_match",
+            )
             return _CONTINUE
 
         # Classify command — find matching filter
         match = self._registry.classify(command)
         if match is None:
+            self._log_outcome(
+                command=command,
+                filter_used=None,
+                input_chars=len(output),
+                output_chars=len(output),
+                savings_pct=0.0,
+                exit_code=exit_code,
+                outcome="no_match",
+            )
             return _CONTINUE
 
         filter_name, filter_fn_or_config = match
@@ -306,11 +335,29 @@ class CompactHook:
             logger.warning(
                 f"hooks-compact: Filter '{filter_name}' raised an exception: {e}"
             )
+            self._log_outcome(
+                command=command,
+                filter_used=filter_name,
+                input_chars=len(output),
+                output_chars=len(output),
+                savings_pct=0.0,
+                exit_code=exit_code,
+                outcome="filter_error",
+            )
             return _CONTINUE
 
         # ── Stage 4: DECIDE ───────────────────────────────────────────────────
         # If filter produced no change or empty result, passthrough
         if not compressed or compressed == output or compressed == processed:
+            self._log_outcome(
+                command=command,
+                filter_used=filter_name,
+                input_chars=len(output),
+                output_chars=len(output),
+                savings_pct=0.0,
+                exit_code=exit_code,
+                outcome="passthrough",
+            )
             return _CONTINUE
 
         # Build stats
@@ -335,21 +382,27 @@ class CompactHook:
             modified_data["result"]["output"] = compressed
         else:
             # Can't locate where to write the compressed text — passthrough
+            self._log_outcome(
+                command=command,
+                filter_used=filter_name,
+                input_chars=input_chars,
+                output_chars=input_chars,
+                savings_pct=0.0,
+                exit_code=exit_code,
+                outcome="passthrough",
+            )
             return _CONTINUE
 
         # ── Telemetry ─────────────────────────────────────────────────────────
-        if self._telemetry is not None:
-            # Strip "cd /path &&" prefix so telemetry shows "git" not "cd"
-            clean_command = _strip_shell_prefix(command)
-            self._telemetry.log_compression(
-                session_id=self._session_id,
-                command=clean_command,
-                filter_used=filter_name,
-                input_chars=input_chars,
-                output_chars=output_chars,
-                savings_pct=savings_pct,
-                exit_code=exit_code,
-            )
+        self._log_outcome(
+            command=command,
+            filter_used=filter_name,
+            input_chars=input_chars,
+            output_chars=output_chars,
+            savings_pct=savings_pct,
+            exit_code=exit_code,
+            outcome="compressed",
+        )
 
         # ── User message (debug or savings) ───────────────────────────────────
         user_message: str | None = None
@@ -374,6 +427,36 @@ class CompactHook:
             user_message=user_message,
             user_message_level="info",
         )
+
+    def _log_outcome(
+        self,
+        *,
+        command: str,
+        filter_used: str | None,
+        input_chars: int,
+        output_chars: int,
+        savings_pct: float,
+        exit_code: int | None,
+        outcome: str,
+    ) -> None:
+        """Log a telemetry row with outcome. Fail-safe: never raises."""
+        if self._telemetry is None:
+            return
+        try:
+            clean_command = _strip_shell_prefix(command)
+            self._telemetry.log_compression(
+                session_id=self._session_id,
+                command=clean_command,
+                filter_used=filter_used,
+                input_chars=input_chars,
+                output_chars=output_chars,
+                savings_pct=savings_pct,
+                exit_code=exit_code,
+                outcome=outcome,
+                config_hash=self._config_hash,
+            )
+        except Exception as e:
+            logger.warning(f"hooks-compact: Failed to log outcome: {e}")
 
     @staticmethod
     def _format_debug_message(

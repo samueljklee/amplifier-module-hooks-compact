@@ -7,6 +7,8 @@ Users can disable via config: telemetry.local = false
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -17,6 +19,35 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_PATH = "~/.amplifier/hooks-compact/telemetry.db"
 _DEFAULT_RETENTION_DAYS = 90
+
+
+def compute_config_hash(
+    *,
+    config: dict[str, Any],
+    yaml_bytes: str,
+    version: str,
+) -> str:
+    """Compute a SHA-256 fingerprint of the hook's effective configuration.
+
+    The hash captures three components separated by ``\\n---\\n``:
+    1. Canonical JSON of the merged config dict (sorted keys, compact).
+    2. Raw bytes of any loaded user/project output-filters.yaml (or "" if absent).
+    3. Current _VERSION string.
+
+    Computed once at mount time. Same hash for all rows in a session.
+    Restart to pick up filter changes.
+
+    Args:
+        config: The effective merged configuration dict.
+        yaml_bytes: Raw file contents of output-filters.yaml, or "" if no file.
+        version: The _VERSION string from __init__.py.
+
+    Returns:
+        64-char lowercase hex SHA-256 digest.
+    """
+    config_json = json.dumps(config, sort_keys=True, separators=(",", ":"))
+    payload = f"{config_json}\n---\n{yaml_bytes}\n---\n{version}"
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 class TelemetryStore:
@@ -58,7 +89,9 @@ class TelemetryStore:
                     input_chars  INTEGER NOT NULL,
                     output_chars INTEGER NOT NULL,
                     savings_pct  REAL NOT NULL,
-                    exit_code    INTEGER
+                    exit_code    INTEGER,
+                    outcome      TEXT,
+                    config_hash  TEXT
                 )
             """)
             conn.execute(
@@ -67,6 +100,20 @@ class TelemetryStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_timestamp ON compression_log (timestamp)"
             )
+
+            # ── Schema migration: add columns to pre-existing old-schema DBs ──
+            # Idempotent: skips columns that already exist.
+            try:
+                cursor = conn.execute("PRAGMA table_info(compression_log)")
+                existing = {row[1] for row in cursor}
+                for col, typ in [("outcome", "TEXT"), ("config_hash", "TEXT")]:
+                    if col not in existing:
+                        conn.execute(
+                            f"ALTER TABLE compression_log ADD COLUMN {col} {typ}"
+                        )
+            except Exception as e:
+                logger.warning(f"hooks-compact telemetry: Schema migration failed: {e}")
+
             conn.commit()
 
         self._prune_old_records()
@@ -96,6 +143,8 @@ class TelemetryStore:
         output_chars: int,
         savings_pct: float,
         exit_code: int | None,
+        outcome: str | None = None,
+        config_hash: str | None = None,
     ) -> None:
         """Log a compression event to the database.
 
@@ -107,6 +156,8 @@ class TelemetryStore:
             output_chars: Character count of the compressed output.
             savings_pct: Percentage savings (0-100).
             exit_code: Command exit code, if known.
+            outcome: One of compressed/passthrough/no_match/filter_error, or None.
+            config_hash: SHA-256 of config+filters+version, computed at mount time.
         """
         if not self.enabled:
             return
@@ -119,8 +170,9 @@ class TelemetryStore:
                     """
                     INSERT INTO compression_log
                         (timestamp, session_id, command, filter_used,
-                         input_chars, output_chars, savings_pct, exit_code)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         input_chars, output_chars, savings_pct, exit_code,
+                         outcome, config_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         timestamp,
@@ -131,6 +183,8 @@ class TelemetryStore:
                         output_chars,
                         savings_pct,
                         exit_code,
+                        outcome,
+                        config_hash,
                     ),
                 )
                 conn.commit()

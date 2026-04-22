@@ -9,7 +9,12 @@ dist/
 .ruff_cache/
 .amplifier/
 telemetry.db
-docs/
+# Plan documents stay local-only (per user preference)
+docs/plans/
+
+# Stale sales material removed in pre-canary hygiene (R5)
+docs/*.html
 *.db
 .DS_Store
 eval/results/
+eval/fixtures/
