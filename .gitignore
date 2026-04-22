@@ -18,3 +18,4 @@ docs/*.html
 *.db
 .DS_Store
 eval/results/
+eval/fixtures/

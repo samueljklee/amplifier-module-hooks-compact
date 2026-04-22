@@ -1,6 +1,12 @@
 # hooks-compact: Comprehensive Eval Test Cases
 # All 26 filter scenarios with setup/cleanup and evaluation criteria.
 #
+# Path variables (resolved by consuming scripts — not native YAML features):
+#   $REPO_ROOT    — this repository's root directory
+#   $FIXTURES_DIR — eval fixture directory (env HOOKS_COMPACT_EVAL_FIXTURES, default: ./eval/fixtures)
+#
+# Run eval/bootstrap.sh first to create fixture directories under $FIXTURES_DIR.
+#
 # Format for reporting results:
 #   Simulation: | Scenario | Filter | Before (chars) | After (chars) | Savings | Before Preview | After Preview |
 #   A/B Test:   | Scenario | Input | Output | Savings | With Turns | Without Turns | With Calls | Without Calls | Verdict |
@@ -14,7 +20,7 @@ test_cases:
     filter: git-status
     scenario: normal
     prompt: "check git status in this repo"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: [git status]
     max_acceptable_tool_calls: 2
     notes: "Should show branch, staged/unstaged/untracked files compactly"
@@ -25,7 +31,7 @@ test_cases:
     filter: git-diff
     scenario: normal
     prompt: "show me the diff of any uncommitted changes"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: [git diff]
     max_acceptable_tool_calls: 2
     notes: "Should keep diffstat + first N changed lines per file"
@@ -36,7 +42,7 @@ test_cases:
     filter: git-log
     scenario: normal
     prompt: "show me the last 10 commits"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: ["git log"]
     max_acceptable_tool_calls: 2
     notes: "Already compact in --oneline mode; minimal savings expected"
@@ -47,7 +53,7 @@ test_cases:
     filter: git-simple
     scenario: success
     prompt: "push the current branch to origin"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: ["git push"]
     max_acceptable_tool_calls: 2
     notes: "Success should short-circuit to branch ref or 'ok'"
@@ -58,7 +64,7 @@ test_cases:
     filter: git-simple
     scenario: failure
     prompt: "push the current branch to origin"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: ["git push"]
     max_acceptable_tool_calls: 2
     notes: "Failure should preserve the error and hint lines"
@@ -69,7 +75,7 @@ test_cases:
     filter: git-simple
     scenario: success
     prompt: "stage all changes and commit with message 'test: eval commit'"
-    working_dir: /tmp/test-rust-project
+    working_dir: $FIXTURES_DIR/test-rust-project
     expected_commands: ["git commit"]
     max_acceptable_tool_calls: 3
     notes: "Should preserve [branch hash] message line; strip everything else"
@@ -80,7 +86,7 @@ test_cases:
     filter: git-simple
     scenario: success
     prompt: "pull the latest changes from origin"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: ["git pull"]
     max_acceptable_tool_calls: 2
     notes: "Should keep remote ref and file change summary"
@@ -93,7 +99,7 @@ test_cases:
     filter: pytest
     scenario: all-pass
     prompt: "run the test suite with uv run pytest -q and tell me if all tests pass"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: [pytest]
     max_acceptable_tool_calls: 2
     notes: "Should collapse to '✓ N passed in Xs'. Asymmetric: ~94% savings."
@@ -104,7 +110,7 @@ test_cases:
     filter: pytest
     scenario: failures
     prompt: "run pytest on /tmp/test_eval_fail.py -v and tell me what failed"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: [pytest]
     max_acceptable_tool_calls: 3
     notes: "Must preserve FAILURES section + error messages. Asymmetric: ~43% savings."
@@ -115,7 +121,7 @@ test_cases:
     filter: cargo-test
     scenario: all-pass
     prompt: "run cargo test and tell me if all tests pass"
-    working_dir: /tmp/test-rust-project
+    working_dir: $FIXTURES_DIR/test-rust-project
     expected_commands: ["cargo test"]
     max_acceptable_tool_calls: 2
     notes: "Should collapse to '✓ N passed (Xs)'. ~96% savings."
@@ -126,7 +132,7 @@ test_cases:
     filter: cargo-test
     scenario: failures
     prompt: "run cargo test and tell me what failed"
-    working_dir: /tmp/test-rust-fail
+    working_dir: $FIXTURES_DIR/test-rust-fail
     expected_commands: ["cargo test"]
     max_acceptable_tool_calls: 3
     notes: "Must preserve thread panic output for each failure. ~39% savings."
@@ -137,7 +143,7 @@ test_cases:
     filter: npm-test
     scenario: all-pass
     prompt: "run npm test and tell me if all tests pass"
-    working_dir: /tmp/test-node-project
+    working_dir: $FIXTURES_DIR/test-node-project
     expected_commands: ["npm test"]
     max_acceptable_tool_calls: 2
     notes: "Mocha: should collapse to '✓ N passing'. ~95% savings."
@@ -148,7 +154,7 @@ test_cases:
     filter: npm-test
     scenario: failures
     prompt: "run npm test and tell me what failed"
-    working_dir: /tmp/test-node-fail
+    working_dir: $FIXTURES_DIR/test-node-fail
     expected_commands: ["npm test"]
     max_acceptable_tool_calls: 3
     notes: "Mocha: must show '✗ N failing' with AssertionError details. ~12% savings (failure case)."
@@ -161,7 +167,7 @@ test_cases:
     filter: ruff
     scenario: errors
     prompt: "run ruff check on /tmp/lint_issues.py and tell me what needs fixing"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: [ruff]
     max_acceptable_tool_calls: 2
     notes: "Group-by-rule compression. Must show all unique violations. ~76% savings."
@@ -172,7 +178,7 @@ test_cases:
     filter: ruff
     scenario: clean
     prompt: "run ruff check on the source and tell me if there are any lint issues"
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: [ruff]
     max_acceptable_tool_calls: 2
     notes: "Already short output; should return 'ok (no ruff issues)'. ~0% savings (correct)."
@@ -183,7 +189,7 @@ test_cases:
     filter: cargo-clippy
     scenario: warnings
     prompt: "run cargo clippy and tell me about any warnings"
-    working_dir: /tmp/test-rust-clippy
+    working_dir: $FIXTURES_DIR/test-rust-clippy
     expected_commands: ["cargo clippy"]
     max_acceptable_tool_calls: 2
     notes: "Group-by-rule compression. ~74% savings."
@@ -194,7 +200,7 @@ test_cases:
     filter: eslint
     scenario: errors
     prompt: "run npx eslint src/ and tell me what needs to be fixed"
-    working_dir: /tmp/test-node-eslint
+    working_dir: $FIXTURES_DIR/test-node-eslint
     expected_commands: [eslint]
     max_acceptable_tool_calls: 2
     notes: "Group-by-rule compression. ~78% savings."
@@ -207,7 +213,7 @@ test_cases:
     filter: cargo-build
     scenario: success-with-warnings
     prompt: "build the project with cargo build and tell me if it succeeds"
-    working_dir: /tmp/test-rust-project
+    working_dir: $FIXTURES_DIR/test-rust-project
     expected_commands: ["cargo build"]
     max_acceptable_tool_calls: 2
     notes: "Should return 'ok (build succeeded, with warnings)' + warning blocks. ~41% savings."
@@ -218,7 +224,7 @@ test_cases:
     filter: cargo-build
     scenario: errors
     prompt: "build the project and tell me what errors need to be fixed"
-    working_dir: /tmp/test-rust-errors
+    working_dir: $FIXTURES_DIR/test-rust-errors
     expected_commands: ["cargo build"]
     max_acceptable_tool_calls: 2
     notes: "Error-only strategy. Must preserve error[E...] blocks. ~65% savings."
@@ -229,7 +235,7 @@ test_cases:
     filter: tsc
     scenario: errors
     prompt: "run npx tsc --noEmit and tell me what type errors exist"
-    working_dir: /tmp/test-ts-errors
+    working_dir: $FIXTURES_DIR/test-ts-errors
     expected_commands: [tsc]
     max_acceptable_tool_calls: 2
     notes: "Error-only. For small files, may add summary. Real savings on large TS projects."
@@ -240,7 +246,7 @@ test_cases:
     filter: npm-build
     scenario: success
     prompt: "run npm run build and tell me if it succeeds"
-    working_dir: /tmp/test-node-project
+    working_dir: $FIXTURES_DIR/test-node-project
     expected_commands: ["npm run build"]
     max_acceptable_tool_calls: 2
     notes: "Short-circuit to 'ok (build succeeded)'. ~80% savings."
@@ -275,7 +281,7 @@ test_cases:
     filter: make
     scenario: success
     prompt: "run make all in the project"
-    working_dir: /tmp/test-make-project
+    working_dir: $FIXTURES_DIR/test-make-project
     expected_commands: [make]
     max_acceptable_tool_calls: 2
     notes: "Strip entering/leaving dir noise. Best savings on large Makefiles."
@@ -313,7 +319,7 @@ test_cases:
     filter: ruff
     scenario: fix-after-compressed-output
     prompt: "run ruff check on /tmp/lint_issues.py and fix all the errors. do not ask for clarification."
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: [ruff]
     max_acceptable_tool_calls: 6
     notes: |
@@ -346,7 +352,7 @@ test_cases:
     filter: pytest
     scenario: fix-after-compressed-output
     prompt: "run pytest on /tmp/test_eval_fail.py -v and fix all the failing tests. do not ask for clarification."
-    working_dir: /Users/samule/repo/amplifier-module-hooks-compact
+    working_dir: $REPO_ROOT
     expected_commands: [pytest]
     max_acceptable_tool_calls: 6
     notes: |
@@ -378,7 +384,7 @@ test_cases:
     filter: cargo-clippy
     scenario: fix-after-compressed-output
     prompt: "run cargo clippy in /tmp/test-rust-clippy and fix all the warnings. do not ask for clarification."
-    working_dir: /tmp/test-rust-clippy
+    working_dir: $FIXTURES_DIR/test-rust-clippy
     expected_commands: ["cargo clippy"]
     max_acceptable_tool_calls: 8
     notes: |
@@ -394,7 +400,7 @@ test_cases:
     filter: cargo-build
     scenario: fix-after-compressed-output
     prompt: "run cargo build in /tmp/test-rust-errors and fix any compile errors. do not ask for clarification."
-    working_dir: /tmp/test-rust-errors
+    working_dir: $FIXTURES_DIR/test-rust-errors
     expected_commands: ["cargo build"]
     max_acceptable_tool_calls: 8
     notes: |

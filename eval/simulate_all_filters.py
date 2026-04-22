@@ -5,8 +5,9 @@ Tests all 26 filter scenarios with real command output (or realistic fixtures).
 Reports before/after/savings in the standard table format.
 
 Usage:
-    cd /Users/samule/repo/amplifier-module-hooks-compact
     uv run python eval/simulate_all_filters.py
+
+Set HOOKS_COMPACT_EVAL_FIXTURES to override fixture directory (default: ./eval/fixtures).
 """
 
 from __future__ import annotations
@@ -17,6 +18,12 @@ import os
 
 # Add the module root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FIXTURES_DIR = os.environ.get(
+    "HOOKS_COMPACT_EVAL_FIXTURES",
+    os.path.join(REPO_ROOT, "eval", "fixtures"),
+)
 
 from amplifier_module_hooks_compact.filters.git import (
     filter_git_status,
@@ -45,13 +52,18 @@ import yaml
 
 
 def run_cmd(cmd: str, cwd: str | None = None, timeout: int = 30) -> tuple[str, int]:
-    """Run a shell command and return (combined_output, exit_code)."""
+    """Run a shell command and return (stdout_only, exit_code).
+
+    Only stdout is returned — matching the real hook at hook.py:265-268
+    which reads result.output.stdout exclusively.  Stderr-heavy commands
+    (cargo build, cargo clippy, curl -v) will therefore show ~0% savings
+    in simulation, which is the honest result (R7).
+    """
     try:
         result = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, cwd=cwd, timeout=timeout
         )
-        output = result.stdout + result.stderr
-        return output, result.returncode
+        return result.stdout, result.returncode
     except subprocess.TimeoutExpired:
         return f"[timeout after {timeout}s]", 1
     except Exception as e:
@@ -121,7 +133,7 @@ def run_all_simulations() -> list[dict]:
 
     # 1. git status dirty
     output, code = run_cmd(
-        "git status", cwd="/Users/samule/repo/amplifier-module-hooks-compact"
+        "git status", cwd=REPO_ROOT
     )
     results.append(
         simulate(
@@ -189,7 +201,7 @@ index 3456789..cdefghi 100644
     # 3. git log
     output, code = run_cmd(
         "git log --oneline -10",
-        cwd="/Users/samule/repo/amplifier-module-hooks-compact",
+        cwd=REPO_ROOT,
     )
     results.append(
         simulate(
@@ -288,7 +300,7 @@ Fast-forward
     # 8. pytest all pass
     output, code = run_cmd(
         "uv run pytest -q",
-        cwd="/Users/samule/repo/amplifier-module-hooks-compact",
+        cwd=REPO_ROOT,
     )
     results.append(
         simulate(
@@ -303,22 +315,22 @@ Fast-forward
 
     # 9. pytest with failures
     output, code = run_cmd(
-        "uv run pytest /tmp/test_eval_fail.py -v",
-        cwd="/Users/samule/repo/amplifier-module-hooks-compact",
+        f"uv run pytest {os.path.join(FIXTURES_DIR, 'test_eval_fail.py')} -v",
+        cwd=REPO_ROOT,
     )
     results.append(
         simulate(
             "pytest-failures",
             "pytest",
             output,
-            "pytest -v /tmp/test_eval_fail.py",
+            f"pytest -v {os.path.join(FIXTURES_DIR, 'test_eval_fail.py')}",
             code,
             filter_pytest,
         )
     )
 
     # 10. cargo test all pass
-    output, code = run_cmd("cargo test", cwd="/tmp/test-rust-project")
+    output, code = run_cmd("cargo test", cwd=os.path.join(FIXTURES_DIR, "test-rust-project"))
     results.append(
         simulate(
             "cargo-test-pass",
@@ -331,7 +343,7 @@ Fast-forward
     )
 
     # 11. cargo test with failures
-    output, code = run_cmd("cargo test", cwd="/tmp/test-rust-fail")
+    output, code = run_cmd("cargo test", cwd=os.path.join(FIXTURES_DIR, "test-rust-fail"))
     results.append(
         simulate(
             "cargo-test-fail",
@@ -344,7 +356,7 @@ Fast-forward
     )
 
     # 12. npm test all pass
-    output, code = run_cmd("npm test", cwd="/tmp/test-node-project")
+    output, code = run_cmd("npm test", cwd=os.path.join(FIXTURES_DIR, "test-node-project"))
     results.append(
         simulate(
             "npm-test-pass",
@@ -357,7 +369,7 @@ Fast-forward
     )
 
     # 13. npm test with failures
-    output, code = run_cmd("npm test", cwd="/tmp/test-node-fail")
+    output, code = run_cmd("npm test", cwd=os.path.join(FIXTURES_DIR, "test-node-fail"))
     results.append(
         simulate(
             "npm-test-fail",
@@ -373,8 +385,8 @@ Fast-forward
 
     # 14. ruff with errors
     output, code = run_cmd(
-        "uvx ruff check /tmp/lint_issues.py",
-        cwd="/Users/samule/repo/amplifier-module-hooks-compact",
+        f"uvx ruff check {os.path.join(FIXTURES_DIR, 'lint_issues.py')}",
+        cwd=REPO_ROOT,
     )
     # Strip download noise from uvx
     lines = output.split("\n")
@@ -384,7 +396,7 @@ Fast-forward
             "ruff-errors",
             "ruff",
             cleaned.strip(),
-            "ruff check /tmp/lint_issues.py",
+            f"ruff check {os.path.join(FIXTURES_DIR, 'lint_issues.py')}",
             code,
             filter_ruff,
         )
@@ -393,7 +405,7 @@ Fast-forward
     # 15. ruff clean
     output, code = run_cmd(
         "uv run ruff check amplifier_module_hooks_compact/",
-        cwd="/Users/samule/repo/amplifier-module-hooks-compact",
+        cwd=REPO_ROOT,
     )
     results.append(
         simulate(
@@ -407,7 +419,7 @@ Fast-forward
     )
 
     # 16. cargo clippy
-    output, code = run_cmd("cargo clippy", cwd="/tmp/test-rust-clippy")
+    output, code = run_cmd("cargo clippy", cwd=os.path.join(FIXTURES_DIR, "test-rust-clippy"))
     results.append(
         simulate(
             "cargo-clippy",
@@ -420,7 +432,7 @@ Fast-forward
     )
 
     # 17. eslint errors
-    output, code = run_cmd("npx eslint src/", cwd="/tmp/test-node-eslint")
+    output, code = run_cmd("npx eslint src/", cwd=os.path.join(FIXTURES_DIR, "test-node-eslint"))
     results.append(
         simulate(
             "eslint-errors",
@@ -435,8 +447,8 @@ Fast-forward
     # ── BUILD FILTERS ─────────────────────────────────────────────────────────
 
     # 18. cargo build clean
-    run_cmd("cargo clean", cwd="/tmp/test-rust-project")
-    output, code = run_cmd("cargo build", cwd="/tmp/test-rust-project")
+    run_cmd("cargo clean", cwd=os.path.join(FIXTURES_DIR, "test-rust-project"))
+    output, code = run_cmd("cargo build", cwd=os.path.join(FIXTURES_DIR, "test-rust-project"))
     results.append(
         simulate(
             "cargo-build-clean",
@@ -449,7 +461,7 @@ Fast-forward
     )
 
     # 19. cargo build with errors (create a file with errors)
-    rust_err_dir = "/tmp/test-rust-errors"
+    rust_err_dir = os.path.join(FIXTURES_DIR, "test-rust-errors")
     os.makedirs(rust_err_dir + "/src", exist_ok=True)
     with open(rust_err_dir + "/Cargo.toml", "w") as f:
         f.write('[package]\nname = "test_errors"\nversion = "0.1.0"\nedition = "2021"\n')
@@ -474,7 +486,7 @@ fn main() {
     )
 
     # 20. tsc errors
-    ts_dir = "/tmp/test-ts-errors"
+    ts_dir = os.path.join(FIXTURES_DIR, "test-ts-errors")
     os.makedirs(ts_dir, exist_ok=True)
     with open(ts_dir + "/tsconfig.json", "w") as f:
         f.write('{"compilerOptions": {"strict": true, "noEmit": true}}\n')
@@ -599,7 +611,7 @@ To reinstall 1.7.1, run:
 
     # 24. make build
     make_cfg = load_yaml_filter("make")
-    make_output, make_code = run_cmd("make all", cwd="/tmp/test-make-project")
+    make_output, make_code = run_cmd("make all", cwd=os.path.join(FIXTURES_DIR, "test-make-project"))
     if not make_output.strip():
         make_output = "gcc -o hello hello.c\nBuild successful!\n"
     results.append(

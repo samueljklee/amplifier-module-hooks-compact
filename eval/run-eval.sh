@@ -21,6 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 RESULTS_DIR="$SCRIPT_DIR/results/$(date +%Y-%m-%d-%H-%M)"
 BUNDLE_URL="git+https://github.com/samueljklee/amplifier-module-hooks-compact@main#subdirectory=behaviors/compact.yaml"
+FIXTURES_DIR="${HOOKS_COMPACT_EVAL_FIXTURES:-$SCRIPT_DIR/fixtures}"
 TELEMETRY_DB="$HOME/.amplifier/hooks-compact/telemetry.db"
 AMPLIFIER_PROJECTS="$HOME/.amplifier/projects"
 
@@ -108,6 +109,9 @@ run_test_case() {
   local working_dir
   prompt=$(get_case_field "$test_id" "prompt")
   working_dir=$(get_case_field "$test_id" "working_dir")
+  # Resolve path tokens from test-cases.yaml
+  working_dir="${working_dir/\$REPO_ROOT/$REPO_DIR}"
+  working_dir="${working_dir/\$FIXTURES_DIR/$FIXTURES_DIR}"
 
   local project_slug
   project_slug=$(path_to_project_slug "$working_dir")
@@ -126,8 +130,7 @@ run_test_case() {
     amplifier run \
       --bundle "$BUNDLE_URL" \
       --mode chat \
-      "$prompt" \
-      2>/dev/null) || true
+      "$prompt") || true
 
   local session_a
   session_a=$(new_sessions_since "$project_slug" "$before_a" | head -1)
@@ -150,8 +153,7 @@ run_test_case() {
   (cd "$working_dir" && \
     amplifier run \
       --mode chat \
-      "$prompt" \
-      2>/dev/null) || true
+      "$prompt") || true
 
   local session_b
   session_b=$(new_sessions_since "$project_slug" "$before_b" | head -1)

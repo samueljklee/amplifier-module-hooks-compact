@@ -29,6 +29,7 @@ TELEMETRY_DB="${4:-$HOME/.amplifier/hooks-compact/telemetry.db}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
+FIXTURES_DIR="${HOOKS_COMPACT_EVAL_FIXTURES:-$SCRIPT_DIR/fixtures}"
 
 mkdir -p "$RESULTS_DIR"
 
@@ -119,6 +120,9 @@ run_test_case() {
   local c_path
   prompt=$(get_case_field "$test_id" "prompt")
   working_dir=$(get_case_field "$test_id" "working_dir")
+  # Resolve path tokens from test-cases.yaml
+  working_dir="${working_dir/\$REPO_ROOT/$REPO_DIR}"
+  working_dir="${working_dir/\$FIXTURES_DIR/$FIXTURES_DIR}"
   c_path=$(container_path "$working_dir")
 
   header "Test case: $test_id"
@@ -133,7 +137,7 @@ run_test_case() {
 
   amplifier-digital-twin exec --stream "$DTU_A_ID" -- \
     "cd $c_path && amplifier run --mode chat '$prompt'" \
-    2>/dev/null || true
+    || true
 
   local session_a
   session_a=$(new_session_in_container "$DTU_A_ID" "$c_path" "$before_a")
@@ -154,7 +158,7 @@ run_test_case() {
 
   amplifier-digital-twin exec --stream "$DTU_B_ID" -- \
     "cd $c_path && amplifier run --mode chat '$prompt'" \
-    2>/dev/null || true
+    || true
 
   local session_b
   session_b=$(new_session_in_container "$DTU_B_ID" "$c_path" "$before_b")
