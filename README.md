@@ -17,7 +17,6 @@ That's it. Bash stdout is compressed automatically. Commands writing primarily t
 ```yaml
 hooks:
   - module: hooks-compact
-    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1
     config:
       enabled: true
       min_lines: 5
@@ -109,7 +108,6 @@ Tool runner prefixes are automatically stripped before matching, so all patterns
 ```yaml
 hooks:
   - module: hooks-compact
-    source: git+https://github.com/samueljklee/amplifier-module-hooks-compact@v0.1.0-canary.1
     config:
       enabled: true           # set false to disable entirely
       min_lines: 5            # skip compression for output under N lines
